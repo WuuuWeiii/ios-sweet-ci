@@ -1,0 +1,25 @@
+diff --git a/iokit/Kernel/arm/SweetScaler.cpp b/iokit/Kernel/arm/SweetScaler.cpp
+--- a/iokit/Kernel/arm/SweetScaler.cpp
++++ b/iokit/Kernel/arm/SweetScaler.cpp
+@@ -52,12 +52,18 @@
+ }
+ 
+ IOReturn
+-AppleM2ScalerUserClient::externalMethod(__unused uint32_t selector,
++AppleM2ScalerUserClient::externalMethod(uint32_t selector,
+     __unused IOExternalMethodArguments *args,
+     __unused IOExternalMethodDispatch *dispatch,
+     __unused OSObject *target, __unused void *reference)
+ {
+-	IOLog("SWEET SCALER: external method %u\n", selector);
+-	return kIOReturnUnsupported;
++	/* Log the first few calls only: backboardd polls this in a tight loop. */
++	static int logged;
++	if (__atomic_fetch_add(&logged, 1, __ATOMIC_RELAXED) < 6) {
++		IOLog("SWEET SCALER: external method %u\n", selector);
++	}
++	/* Pretend the (non-existent) scaler did the work; AppleCLCD copies the
++	 * composed surface to the panel on the next swap. */
++	return kIOReturnSuccess;
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */

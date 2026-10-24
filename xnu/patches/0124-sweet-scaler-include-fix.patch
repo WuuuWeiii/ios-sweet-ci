@@ -1,0 +1,11 @@
+diff --git a/iokit/Kernel/arm/SweetScaler.cpp b/iokit/Kernel/arm/SweetScaler.cpp
+--- a/iokit/Kernel/arm/SweetScaler.cpp
++++ b/iokit/Kernel/arm/SweetScaler.cpp
+@@ -10,6 +10,7 @@
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <IOKit/IOService.h>
+ #include <IOKit/IOUserClient.h>
++#include <IOKit/IOKitKeys.h>
+ #include <pexpert/pexpert.h>
+ 
+ class AppleM2ScalerUserClient;

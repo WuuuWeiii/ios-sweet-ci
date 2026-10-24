@@ -1,0 +1,18 @@
+diff --git a/iokit/Kernel/arm/SweetScaler.cpp b/iokit/Kernel/arm/SweetScaler.cpp
+--- a/iokit/Kernel/arm/SweetScaler.cpp
++++ b/iokit/Kernel/arm/SweetScaler.cpp
+@@ -7,7 +7,7 @@
+  * match succeeds; the CPU fallback in CoreAnimation then does the scaling.
+  * Honours boot-arg sweetscaler=0 to disable.
+  */
+-#if defined(SWEET)
++#if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <IOKit/IOService.h>
+ #include <IOKit/IOUserClient.h>
+ #include <pexpert/pexpert.h>
+@@ -59,4 +59,4 @@
+ 	IOLog("SWEET SCALER: external method %u\n", selector);
+ 	return kIOReturnUnsupported;
+ }
+-#endif /* SWEET */
++#endif /* ARM64_BOARD_CONFIG_SWEET */
