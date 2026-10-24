@@ -1,0 +1,23 @@
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -866,6 +866,19 @@
+ 	ud.dma_pa = ptoa_64(pn);
+ 	ud_if_create();
+ 
++	/*
++	 * ABL hands the controller over while it may still be running (fastboot
++	 * just used it).  A CSFTRST while running leaves the command engine dead
++	 * (DEPCMD then times out), so halt first and wait for DEVCTRLHLT.
++	 */
++	dwc_wr(DCTL, dwc_rd(DCTL) | DCTL_RUN_STOP);
++	for (int j = 0; j < 200 && !(dwc_rd(DSTS) & DSTS_DEVCTRLHLT); j++) {
++		delay(1000);
++	}
++	printf("SWEET USB: halt before reset %s (DCTL 0x%08x DSTS 0x%08x)\n",
++	    (dwc_rd(DSTS) & DSTS_DEVCTRLHLT) ? "done" : "TIMEOUT",
++	    dwc_rd(DCTL), dwc_rd(DSTS));
++
+ 	/* Device controller soft reset (PHY and global setup stay as ABL left them). */
+ 	dwc_wr(DCTL, DCTL_CSFTRST);
+ 	int i;
