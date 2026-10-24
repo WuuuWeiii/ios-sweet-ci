@@ -1,0 +1,117 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -82,6 +82,14 @@
+ #define SWEET_FB_LOGICAL_H              2436
+ #define SWEET_FB_FORMAT_BGRA            0x42475241
+ 
++/* Published for the UFS screenshot helper (bsd/dev/sweet_ufs.c). */
++extern "C" {
++uintptr_t sweet_fb_pixels;
++uint32_t  sweet_fb_width;
++uint32_t  sweet_fb_height;
++uint32_t  sweet_fb_rowbytes;
++}
++
+ class IOMobileFramebuffer : public IOService {
+ 	OSDeclareDefaultStructors(IOMobileFramebuffer);
+ };
+@@ -240,6 +248,10 @@
+ 	registerService();
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH);
++	sweet_fb_pixels = fPixels;
++	sweet_fb_width = fWidth;
++	sweet_fb_height = fHeight;
++	sweet_fb_rowbytes = fRowBytes;
+ 	IOLog("SWEET FB: %s %ux%u content at %d,%d\n", fScale ? "scaling to" : "cropping at",
+ 	    fContentW, fContentH, fOffX, fOffY);
+ 	return true;
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -866,15 +866,71 @@
+ 	}
+ }
+ 
++extern uintptr_t sweet_fb_pixels;
++extern uint32_t sweet_fb_width, sweet_fb_height, sweet_fb_rowbytes;
++
++#define SWEET_SHOT_FIRST_BLOCK  5500ULL        /* oops partition, 4 KiB blocks */
++#define SWEET_SHOT_MAX_BYTES    (1080u * 4u * 2400u)
++
++struct sweet_shot_header {
++	char     magic[8];
++	uint32_t version;
++	uint32_t width, height, rowbytes, bytes;
++};
++
++/* Dump the panel framebuffer into the oops partition after <seconds>. */
++static void
++sweet_fb_save_shot(void)
++{
++	struct sweet_shot_header h;
++	void *bounce = (void *)(su.dma + DMA_BOUNCE);
++	uint32_t rowbytes = sweet_fb_rowbytes ? sweet_fb_rowbytes : sweet_fb_width * 4u;
++	uint32_t bytes = rowbytes * sweet_fb_height;
++	if (sweet_fb_pixels == 0 || sweet_fb_width == 0 || sweet_fb_height == 0 ||
++	    bytes == 0 || bytes > SWEET_SHOT_MAX_BYTES) {
++		printf("SWEET SHOT: no framebuffer (%ux%u)\n", sweet_fb_width, sweet_fb_height);
++		return;
++	}
++	bzero(&h, sizeof(h));
++	memcpy(h.magic, "SWEETSH!", 8);
++	h.version = 1;
++	h.width = sweet_fb_width;
++	h.height = sweet_fb_height;
++	h.rowbytes = rowbytes;
++	h.bytes = bytes;
++	lck_mtx_lock(&sweet_ufs_lock);
++	bzero(bounce, UFS_BLOCK);
++	memcpy(bounce, &h, sizeof(h));
++	(void)ufs_write_blocks_raw(SWEET_SHOT_FIRST_BLOCK, 1);
++	uint32_t nblk = (bytes + UFS_BLOCK - 1) / UFS_BLOCK;
++	for (uint32_t i = 0; i < nblk; i++) {
++		bzero(bounce, UFS_BLOCK);
++		uint32_t off = i * UFS_BLOCK;
++		uint32_t n = MIN(UFS_BLOCK, bytes - off);
++		memcpy(bounce, (const void *)(sweet_fb_pixels + off), n);
++		(void)ufs_write_blocks_raw(SWEET_SHOT_FIRST_BLOCK + 1 + i, 1);
++	}
++	(void)ufs_sync_cache();
++	lck_mtx_unlock(&sweet_ufs_lock);
++	printf("SWEET SHOT: framebuffer %ux%u saved at block %llu\n",
++	    sweet_fb_width, sweet_fb_height, SWEET_SHOT_FIRST_BLOCK);
++}
++
+ static void
+ sweet_log_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+ 	uint64_t base = su.first_block + su.nblocks - SWEET_LOG_BLOCKS;
+ 	uint64_t flushed = 0, seq = 0;
+ 	void *bounce = (void *)(su.dma + DMA_BOUNCE);
+-	uint32_t dbg = 0, reset_after = 0;
+-	uint64_t reset_deadline = 0;
++	uint32_t dbg = 0, reset_after = 0, shot_after = 0;
++	uint64_t reset_deadline = 0, shot_deadline = 0;
++	bool shot_done = false;
+ 	PE_parse_boot_argn("ufsdbg", &dbg, sizeof(dbg));
++	PE_parse_boot_argn("sweetfbshot", &shot_after, sizeof(shot_after));
++	if (shot_after) {
++		nanoseconds_to_absolutetime((uint64_t)shot_after * 1000000000ULL, &shot_deadline);
++		shot_deadline += mach_absolute_time();
++	}
+ 	PE_parse_boot_argn("sweetreset", &reset_after, sizeof(reset_after));
+ 	if (dbg && reset_after == 0) {
+ 		reset_after = 120;
+@@ -926,6 +982,10 @@
+ 			sweet_dbg_log_seq = seq;
+ 		}
+ 		flushed = total;
++		if (shot_deadline && !shot_done && mach_absolute_time() > shot_deadline) {
++			shot_done = true;
++			sweet_fb_save_shot();
++		}
+ 		if (dbg) {
+ 			sweet_dbg_dump();
+ 			if (reset_deadline && mach_absolute_time() > reset_deadline) {
