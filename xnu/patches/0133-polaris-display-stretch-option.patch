@@ -1,0 +1,68 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -183,15 +183,26 @@
+ 	}
+ 	if (!native && polaris) {
+ 		/*
+-		 * Polaris is 1080x2160 (18:9). Fit the whole iPhone X logical
+-		 * display by height (998x2160) instead of cropping it, with
+-		 * black 41-pixel bars on the sides.
++		 * Polaris is 1080x2160 (18:9).  By default fit the whole iPhone X
++		 * logical display by height (998x2160) with black side bars;
++		 * sweetfb_polaris_stretch=1 stretches it to fill the panel exactly
++		 * (1080x2160), trading aspect ratio for no bars.
+ 		 */
+-		fContentW = (fLogicalW * fHeight + fLogicalH / 2) / fLogicalH;
+-		fContentH = fHeight;
+-		fOffX = (int32_t)(fWidth - fContentW) / 2;
+-		fOffY = 0;
+-		fScale = 1;
++		int stretch = 0;
++		PE_parse_boot_argn("sweetfb_polaris_stretch", &stretch, sizeof(stretch));
++		if (stretch) {
++			fContentW = fWidth;
++			fContentH = fHeight;
++			fOffX = 0;
++			fOffY = 0;
++			fScale = 1;
++		} else {
++			fContentW = (fLogicalW * fHeight + fLogicalH / 2) / fLogicalH;
++			fContentH = fHeight;
++			fOffX = (int32_t)(fWidth - fContentW) / 2;
++			fOffY = 0;
++			fScale = 1;
++		}
+ 	} else {
+ 		fOffX = (int32_t)(fLogicalW - fWidth) / 2;
+ 		fOffY = (int32_t)(fLogicalH - fHeight) / 2;
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -443,12 +443,21 @@
+ 	fPanelH = 2400;
+ 	fScale = 0;
+ 	if (!native && polaris) {
+-		/* Polaris 1080x2160: the logical display is scaled by height. */
++		/* Polaris 1080x2160: mirror the framebuffer scaling mode. */
++		int stretch = 0;
++		PE_parse_boot_argn("sweetfb_polaris_stretch", &stretch, sizeof(stretch));
+ 		fPanelH = 2160;
+-		fContentW = (fLogicalW * fPanelH + fLogicalH / 2) / fLogicalH;
+-		fContentH = fPanelH;
+-		fOffX = (fPanelW - fContentW) / 2;
+-		fOffY = 0;
++		if (stretch) {
++			fContentW = fPanelW;
++			fContentH = fPanelH;
++			fOffX = 0;
++			fOffY = 0;
++		} else {
++			fContentW = (fLogicalW * fPanelH + fLogicalH / 2) / fLogicalH;
++			fContentH = fPanelH;
++			fOffX = (fPanelW - fContentW) / 2;
++			fOffY = 0;
++		}
+ 		fScale = 1;
+ 	} else {
+ 		fContentW = fPanelW;
