@@ -1,0 +1,41 @@
+diff --git a/bsd/dev/polaris_touch_i2c.c b/bsd/dev/polaris_touch_i2c.c
+--- a/bsd/dev/polaris_touch_i2c.c
++++ b/bsd/dev/polaris_touch_i2c.c
+@@ -451,8 +451,15 @@
+ 				pt_fingers = reported;
+ 				printf("POLARIS HID: Ctrl23 confirmed %u slots, 8-byte report\n", pt_fingers);
+ 			} else {
+-				printf("POLARIS HID: Ctrl28 is not 8-byte report; refusing HID\n");
+-				goto restore;
++				uint32_t force = 0;
++				(void)PE_parse_boot_argn("polaristouchforce", &force, sizeof(force));
++				if (force) {
++					pt_fingers = 1;
++					printf("POLARIS HID: forced 1 slot / 8-byte frame\n");
++				} else {
++					printf("POLARIS HID: Ctrl28 is not 8-byte report; refusing HID\n");
++					goto restore;
++				}
+ 			}
+ 		} else {
+ 			printf("POLARIS HID: Ctrl23 unverified; one experimental slot only\n");
+@@ -463,12 +470,19 @@
+ 		bool logged_bad_frame = false;
+ 		unsigned candidates[MAX_FINGERS] = {0};
+ 		int prior_x[MAX_FINGERS] = {0}, prior_y[MAX_FINGERS] = {0};
++		unsigned frame_logged = 0;
+ 		printf("POLARIS HID: experimental F12 base 0x%02x, %u slots, 8 bytes each\n",
+ 		    f12[3], pt_fingers);
+ 		for (;;) {
+ 			bool valid = true, present[MAX_FINGERS] = {0};
+ 			int x[MAX_FINGERS] = {0}, y[MAX_FINGERS] = {0};
+ 			bool read_ok = pt_read(f12[3], raw, pt_fingers * FINGER_BYTES);
++			if (frame_logged < 10) {
++				frame_logged++;
++				printf("POLARIS HID: frame %u: %02x %02x %02x %02x %02x %02x %02x %02x read=%u\n",
++				    frame_logged, raw[0], raw[1], raw[2], raw[3], raw[4],
++				    raw[5], raw[6], raw[7], read_ok);
++			}
+ 			unsigned bad_slot = MAX_FINGERS;
+ 			if (read_ok) {
+ 				for (unsigned slot = 0; slot < pt_fingers; ++slot) {
