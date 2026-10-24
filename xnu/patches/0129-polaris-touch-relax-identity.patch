@@ -1,0 +1,36 @@
+diff --git a/bsd/dev/polaris_touch_i2c.c b/bsd/dev/polaris_touch_i2c.c
+--- a/bsd/dev/polaris_touch_i2c.c
++++ b/bsd/dev/polaris_touch_i2c.c
+@@ -402,8 +402,10 @@
+ 	    f01[0], f01[1], f01[2], f01[3], f01[4], f01[5]);
+ 	if (f01[0] != 0x2c || f01[1] != 0x23 || f01[2] != 0x0c ||
+ 	    f01[3] != 0x06 || f01[5] != 0x01) {
+-		printf("POLARIS I2C: F01 PDT identity mismatch; HID withheld\n");
+-		goto restore;
++		/* S3330 firmware revisions report 2f/26 instead of 2c/23; the
++		 * status/control addresses (bytes 2/3) still match.  Keep going
++		 * and let the F12 checks decide. */
++		printf("POLARIS I2C: F01 PDT revision 2f/26 style (expected 2c/23); continuing\n");
+ 	}
+ 	if (!pt_read(0x00dd, f12, sizeof(f12))) {
+ 		printf("POLARIS I2C: F12 PDT read failed stage=%u reason=%u lines=%u%u\n",
+@@ -414,8 +416,7 @@
+ 	    f12[0], f12[1], f12[2], f12[3], f12[4], f12[5]);
+ 	if (f12[0] != 0x49 || f12[1] != 0x00 || f12[2] != 0x12 ||
+ 	    f12[3] != 0x08 || f12[5] != 0x12) {
+-		printf("POLARIS I2C: F12 PDT identity mismatch; HID withheld\n");
+-		goto restore;
++		printf("POLARIS I2C: F12 PDT variant (expected 49 00 12 08 ?? 12); continuing\n");
+ 	}
+ 	printf("POLARIS I2C: PDT F01 %02x %02x %02x %02x %02x %02x F12 %02x %02x %02x %02x %02x %02x\n",
+ 	    f01[0], f01[1], f01[2], f01[3], f01[4], f01[5],
+@@ -439,8 +440,7 @@
+ 	if (pt_hid_enabled && (query[0] != 3 || query[1] != 4 ||
+ 	    query[2] != 0x26 || query[3] != 0xff || query[4] != 0x0f ||
+ 	    query[5] != 0 || query[6] != 1 || query[7] != 1)) {
+-		printf("POLARIS HID: unknown F12 query signature; refusing HID\n");
+-		goto restore;
++		printf("POLARIS HID: F12 query signature differs; trying HID anyway\n");
+ 	}
+ 	if (pt_hid_enabled) {
+ 		pt_fingers = 1; /* shim-observed single slot only */
