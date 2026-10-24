@@ -1,0 +1,39 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -475,7 +475,34 @@
+ 					if (lx < dx || lx >= dx + w) {
+ 						continue;
+ 					}
+-					drow[x] = srow[sx + lx - dx];
++					uint32_t v = srow[sx + lx - dx];
++					if (s->pixelFormat == 0x62336138u) {
++						/* CA 10-bit 'b3a8': 2-bit alpha | R10 | G10 | B10. */
++						uint32_t a2 = (v >> 30) & 0x3u;
++						uint32_t a = (a2 == 3u) ? 0xFFu : (a2 << 6);
++						drow[x] = (a << 24) |
++						    ((((v >> 20) & 0x3FFu) >> 2) << 16) |
++						    ((((v >> 10) & 0x3FFu) >> 2) << 8) |
++						    ((v & 0x3FFu) >> 2);
++					} else {
++						drow[x] = v;
++					}
++				}
++			}
++		} else if (src != 0 && bpe == 4 && s->pixelFormat == 0x62336138u) {
++			for (int32_t y = 0; y < h; y++) {
++				const uint32_t *srow = (const uint32_t *)(src + s->offset +
++				    (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4);
++				uint32_t *drow = (uint32_t *)(fPixels +
++				    (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4);
++				for (int32_t x = 0; x < w; x++) {
++					uint32_t v = srow[x];
++					uint32_t a2 = (v >> 30) & 0x3u;
++					uint32_t a = (a2 == 3u) ? 0xFFu : (a2 << 6);
++					drow[x] = (a << 24) |
++					    ((((v >> 20) & 0x3FFu) >> 2) << 16) |
++					    ((((v >> 10) & 0x3FFu) >> 2) << 8) |
++					    ((v & 0x3FFu) >> 2);
+ 				}
+ 			}
+ 		} else if (src != 0 && bpe == 4) {
