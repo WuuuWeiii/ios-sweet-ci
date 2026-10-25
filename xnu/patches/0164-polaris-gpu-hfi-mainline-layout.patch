@@ -1,0 +1,36 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -482,7 +482,7 @@
+ 	} queues[HFI_QUEUE_MAX] = { {0, 10}, {4, 10}, {5, 40} };
+ 	/* table header */
+ 	w[0] = 0;                                  /* version */
+-	w[1] = HFI_TABLE_SIZE >> 2;                /* size in dwords */
++	w[1] = (mode >= 17) ? HFI_TABLE_SIZE : (HFI_TABLE_SIZE >> 2);
+ 	w[2] = 24u >> 2;                           /* qhdr0 offset */
+ 	w[3] = 48u >> 2;                           /* qhdr size */
+ 	w[4] = HFI_QUEUE_MAX;                      /* num_q */
+@@ -490,8 +490,11 @@
+ 	for (uint32_t i = 0; i < HFI_QUEUE_MAX; i++) {
+ 		uint32_t *h = w + 6 + i * 12;
+ 		h[0] = 1;                              /* status active */
+-		h[1] = (uint32_t)(qbase + HFI_QUEUE_OFF(i));   /* queue address */
+-		h[2] = (queues[i].id & 0xffu) | ((queues[i].prio & 0xffu) << 8);
++		/* mainline a6xx_hfi_init: queue data starts a page after the
++		 * table and each queue is another page further. */
++		h[1] = (uint32_t)(qbase + ((mode >= 17) ? (0x1000u * (i + 1u)) : HFI_QUEUE_OFF(i)));
++		h[2] = (queues[i].id & 0xffu) |
++		    (((mode >= 17) ? 10u : queues[i].prio) & 0xffu) << 8;
+ 		h[3] = HFI_QUEUE_SIZE >> 2;            /* queue size in dwords */
+ 		h[4] = 0;                              /* var-size messages */
+ 		h[5] = 0;                              /* drop_cnt */
+@@ -517,7 +520,8 @@
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG), 2u);           /* TCM_BOOT */
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)qbase);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_INFO), (mode == 5) ? 0u : 1u);
+-	cm3_wr(gmu, cm3_reg(GMU_AHB_FENCE_RANGE0), FENCE_RANGE_MASK);
++	cm3_wr(gmu, cm3_reg(GMU_AHB_FENCE_RANGE0),
++	    (mode >= 17) ? 0x802800A0u : FENCE_RANGE_MASK);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_SFR_ADDR), (mode == 9) ? 0u : 0x06030100u);
+ 	cm3_wr(gmu, cm3_reg(GMU_SYS_BUS_CONFIG), 0x1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_IFPC), 0x9C40400u);
