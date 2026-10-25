@@ -18,19 +18,22 @@ if [ ! -d mesa ]; then
 fi
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 if [ ! -d libdrm ]; then
-  ok=0
-  for u in "https://gitlab.freedesktop.org/mesa/drm/-/archive/libdrm-2.4.124/drm-libdrm-2.4.124.tar.gz"            "https://dri.freedesktop.org/libdrm/libdrm-2.4.124.tar.bz2"; do
-    case "$u" in
-      *.tar.gz) f=libdrm.tar.gz ;;
-      *.tar.bz2) f=libdrm.tar.bz2 ;;
-    esac
-    if curl -sL --fail -o "$f" "$u"; then ok=1; break; fi
+  rm -rf libdrm-x && mkdir -p libdrm-x
+  got=0
+  for u in "https://dri.freedesktop.org/libdrm/libdrm-2.4.124.tar.xz" \
+           "https://gitlab.freedesktop.org/mesa/drm/-/archive/libdrm-2.4.124/drm-libdrm-2.4.124.tar.gz" \
+           "https://dri.freedesktop.org/libdrm/libdrm-2.4.124.tar.bz2"; do
+    f="$(basename "$u")"
+    echo "libdrm: trying $u"
+    if curl -sL --fail -o "$f" "$u"; then
+      if tar xf "$f" -C libdrm-x 2>/dev/null; then
+        d="$(find libdrm-x -maxdepth 1 -mindepth 1 -type d | head -1)"
+        if [ -n "$d" ]; then mv "$d" libdrm; got=1; break; fi
+      fi
+      echo "libdrm: $f did not extract"
+    fi
   done
-  [ "$ok" = 1 ] || { echo "cannot download libdrm headers" >&2; exit 1; }
-  case "$f" in
-    *.tar.gz) tar xzf "$f" && mv drm-libdrm-2.4.124 libdrm ;;
-    *.tar.bz2) tar xjf "$f" && mv libdrm-2.4.124 libdrm ;;
-  esac
+  [ "$got" = 1 ] || { echo "cannot obtain libdrm headers" >&2; exit 1; }
 fi
 # the libdrm stand-in (this repo's kernel ABI: SweetAdreno630)
 "$HERE/../../freedreno-sweet/build.sh" "$WORK/drm-standin-out" >/dev/null
