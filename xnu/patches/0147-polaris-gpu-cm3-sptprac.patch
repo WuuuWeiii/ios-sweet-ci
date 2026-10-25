@@ -1,0 +1,43 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -55,6 +55,8 @@
+ #define GMU_GMU2HOST_MASK   0x1F993u
+ #define GMU_GENERAL_7       0x1F9CCu
+ #define GMU_AHB_FENCE_RANGE0 0x23B11u
++#define GMU_GX_SPTPRAC_POWER 0x1A881u
++#define GMU_SPTPRAC_STATUS   0x1F8D0u
+ 
+ #define GMU_FW_WORDS        8192u
+ #define HFI_BLOB_SIZE       0x4000u
+@@ -258,6 +260,22 @@
+ 		return;
+ 	}
+ 
++	/* SPTPRAC must be powered on before HFI (vendor a6xx_sptprac_enable). */
++	cm3_wr(gmu, cm3_reg(GMU_GX_SPTPRAC_POWER), 0x00778000u);
++	uint32_t sptprac = 0;
++	bool sptprac_ok = false;
++	for (int i = 0; i < 20; i++) {
++		sptprac = cm3_rd(gmu, cm3_reg(GMU_SPTPRAC_STATUS));
++		if (sptprac & (1u << 3)) {
++			sptprac_ok = true;
++			break;
++		}
++		delay(1);
++	}
++	printf("POLARIS GPUM2b: SPTPRAC power %s (status %08x)\n",
++	    sptprac_ok ? "on" : "NOT ready", sptprac);
++	sweet_dbg_dump_now();
++
+ 	/* M3: HFI queues. Clear the msg-queue interrupt mask, start HFI, wait. */
+ 	uint32_t mask = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_MASK));
+ 	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_MASK), mask & ~1u);
+@@ -273,6 +291,7 @@
+ 		delay(1);
+ 	}
+ 	printf("POLARIS GPUM2b: HFI ctrl status %08x (%s)\n", hfi, hfi_ok ? "queues up" : "not ready");
++	sweet_dbg_dump_now();
+ 	printf("POLARIS GPUM2b: done: CM3 runs=%s HFI=%s; GX/CP still untouched\n",
+ 	    booted ? "yes" : "no", hfi_ok ? "yes" : "no");
+ }
