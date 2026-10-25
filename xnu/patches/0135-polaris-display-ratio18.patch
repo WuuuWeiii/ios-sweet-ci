@@ -1,0 +1,51 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -196,9 +196,21 @@
+ 		 * sweetfb_polaris_stretch=1 stretches it to fill the panel exactly
+ 		 * (1080x2160), trading aspect ratio for no bars.
+ 		 */
+-		int stretch = 0;
++		int stretch = 0, ratio18 = 0;
+ 		PE_parse_boot_argn("sweetfb_polaris_stretch", &stretch, sizeof(stretch));
+-		if (stretch) {
++		PE_parse_boot_argn("sweetfb_polaris_ratio18", &ratio18, sizeof(ratio18));
++		if (ratio18) {
++			/* Tell iOS the display is 1125x2250 (375x750 pt @3x, exactly
++			 * 18:9) and scale that uniformly by 1080/1125 = 0.96 onto the
++			 * 1080x2160 panel: no distortion and no letterbox. */
++			fLogicalW = 1125;
++			fLogicalH = 2250;
++			fContentW = fWidth;
++			fContentH = fHeight;
++			fOffX = 0;
++			fOffY = 0;
++			fScale = 1;
++		} else if (stretch) {
+ 			fContentW = fWidth;
+ 			fContentH = fHeight;
+ 			fOffX = 0;
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -444,10 +444,18 @@
+ 	fScale = 0;
+ 	if (!native && polaris) {
+ 		/* Polaris 1080x2160: mirror the framebuffer scaling mode. */
+-		int stretch = 0;
++		int stretch = 0, ratio18 = 0;
+ 		PE_parse_boot_argn("sweetfb_polaris_stretch", &stretch, sizeof(stretch));
++		PE_parse_boot_argn("sweetfb_polaris_ratio18", &ratio18, sizeof(ratio18));
+ 		fPanelH = 2160;
+-		if (stretch) {
++		if (ratio18) {
++			fLogicalW = 1125;
++			fLogicalH = 2250;
++			fContentW = fPanelW;
++			fContentH = fPanelH;
++			fOffX = 0;
++			fOffY = 0;
++		} else if (stretch) {
+ 			fContentW = fPanelW;
+ 			fContentH = fPanelH;
+ 			fOffX = 0;
