@@ -1,0 +1,121 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -150,7 +150,8 @@
+  * the HFI page at HFI_GPU_VA; program context bank 0 and stream 5 (GMU
+  * kernel, dt gmu_kernel iommus = <&kgsl_smmu 5>). */
+ static bool
+-pgsm_setup(uint64_t hfi_pa, uint32_t hfi_size, struct pgsm_tables *t, vm_offset_t smmu)
++pgsm_setup(uint64_t hfi_pa, uint32_t hfi_size, struct pgsm_tables *t, vm_offset_t smmu,
++    bool passthrough)
+ {
+ 	vm_offset_t block = 0;
+ 	ppnum_t pn;
+@@ -199,7 +200,7 @@
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_MAIR1, 0u);
+ 	/* Pass-through (TopazGpuW G1): with M=0 the SMMU leaves addresses
+ 	 * unchanged, so the GMU reaches the HFI memory by physical address. */
+-	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, 0xE0u);            /* M=0 pass-through */
++	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, passthrough ? 0xE0u : 0x67u);
+ 	/* The GMU's AHB master id is not documented on this phone: route the
+ 	 * three plausible streams (5 gmu_kernel, 4 gmu_user, 0 GPU) to CB0. */
+ 	pgsm_wr(smmu, SMMU_SMR(0), 0x80000005u);                  /* SMR0: valid, SID 5 */
+@@ -219,7 +220,7 @@
+ 	/* Global SMMU enable: SCR0 bit 0; keep the rest of the register. */
+ 	uint32_t scr0 = pgsm_rd(smmu, 0x0u);
+ 	pgsm_wr(smmu, 0x0u, (scr0 | 1u) & ~2u);
+-	printf("POLARIS GPUM4: SCR0 %08x -> %08x\n", scr0, pgsm_rd(smmu, 0x0u));
++	printf("POLARIS GPUM4: SCR0 %08x -> %08x (passthrough %d)\n", scr0, pgsm_rd(smmu, 0x0u), passthrough);
+ 	printf("POLARIS GPUM4: SMMU ttbr0=%08x%08x cb0 sctlr=%08x cbar0=%08x cba2r0=%08x s2cr0=%08x smr0=%08x\n",
+ 	    pgsm_rd(smmu, 0x8000u + SMMU_CB_TTBR0 + 4u), pgsm_rd(smmu, 0x8000u + SMMU_CB_TTBR0),
+ 	    pgsm_rd(smmu, 0x8000u + SMMU_CB_SCTLR), pgsm_rd(smmu, SMMU_CBAR(0)),
+@@ -260,6 +261,16 @@
+ 		return;
+ 	}
+ 
++	/* Which HFI experiment to run (see the plan in the report):
++	 *   0: no SMMU setup at all, physical qtable
++	 *   1: SMMU pass-through (SCTLR.M=0), physical qtable
++	 *   2: pass-through and HFI_CTRL_INIT written twice
++	 *   3: stage-1 page tables, qtable at GPU VA 0x60000000
++	 *   4: pass-through but no HFI_CTRL_INIT write (status only)
++	 */
++	int mode = 1;
++	(void)PE_parse_boot_argn("polarisgpuhfimode", &mode, sizeof(mode));
++
+ 	uint64_t fw_pa = 0, fw_size = 0, fw_va = 0;
+ 	uint64_t hfi_pa = 0, hfi_va = 0;
+ 	if (!cm3_blob("GPU-GMU", GMU_FW_WORDS * 4u, &fw_pa, &fw_size, &fw_va)) {
+@@ -283,6 +294,9 @@
+ 	}
+ 	hfi_pa = ((uint64_t)hfi_pn) << 12;
+ 	hfi_va = hfi_va_off;
++	uint64_t qbase = (mode == 3) ? HFI_GPU_VA : hfi_pa;
++	printf("POLARIS GPUM2b: HFI mode %d, qtable address 0x%llx\n", mode,
++	    (unsigned long long)qbase);
+ 	printf("POLARIS GPUM2b: HFI table at low phys 0x%llx (kv 0x%llx)\n",
+ 	    (unsigned long long)hfi_pa, (unsigned long long)hfi_va);
+ 	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
+@@ -346,7 +360,7 @@
+ 	for (uint32_t i = 0; i < HFI_QUEUE_MAX; i++) {
+ 		uint32_t *h = w + 6 + i * 12;
+ 		h[0] = 1;                              /* status active */
+-		h[1] = (uint32_t)(hfi_pa + HFI_QUEUE_OFF(i));     /* queue address (phys, pass-through) */
++		h[1] = (uint32_t)(qbase + HFI_QUEUE_OFF(i));   /* queue address */
+ 		h[2] = (queues[i].id & 0xffu) | ((queues[i].prio & 0xffu) << 8);
+ 		h[3] = HFI_QUEUE_SIZE >> 2;            /* queue size in dwords */
+ 		h[4] = 0;                              /* var-size messages */
+@@ -371,7 +385,7 @@
+ 	/* Program the GMU before releasing reset. */
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_FW_INIT), 0);
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG), 2u);           /* TCM_BOOT */
+-	cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)hfi_pa);
++	cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)qbase);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_INFO), 1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_AHB_FENCE_RANGE0), FENCE_RANGE_MASK);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_SFR_ADDR), 0x06030100u);      /* A630v2 chipid */
+@@ -428,25 +442,37 @@
+ 		return;
+ 	}
+ 
+-	/* M4: give the GMU a translated address space for its HFI memory. */
+-	{
++	/* M4 (mode dependent): set up the GPU SMMU and the qtable address. */
++	if (mode != 0) {
+ 		vm_offset_t smmu = ml_io_map(SMMU_BASE, SMMU_SIZE);
+ 		struct pgsm_tables tables = {0, 0, 0, 0, 0, 0};
+-		if (smmu == 0 || !pgsm_setup(hfi_pa, HFI_BLOB_SIZE, &tables, smmu)) {
++		bool pass = (mode != 3);
++		if (smmu == 0 || !pgsm_setup(hfi_pa, HFI_BLOB_SIZE, &tables, smmu, pass)) {
+ 			printf("POLARIS GPUM2b: SMMU setup failed; not starting HFI\n");
+ 			return;
+ 		}
+-		cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)hfi_pa);
+-		printf("POLARIS GPUM2b: HFI qtable now 0x%08x (phys, pass-through)\n",
+-		    cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
++		cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)qbase);
++		printf("POLARIS GPUM2b: HFI qtable now 0x%08x (mode %d)\n",
++		    cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)), mode);
+ 		sweet_dbg_dump_now();
++	} else {
++		printf("POLARIS GPUM2b: SMMU untouched (mode 0)\n");
+ 	}
+ 
+ 	/* M3: HFI queues. Clear the msg-queue interrupt mask, start HFI, wait. */
+ 	uint32_t mask = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_MASK));
+ 	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_MASK), mask & ~1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 0xFFFFFFFFu);
+-	cm3_wr(gmu, cm3_reg(GMU_HFI_CTRL_INIT), 1u);
++	if (mode != 4) {
++		cm3_wr(gmu, cm3_reg(GMU_HFI_CTRL_INIT), 1u);
++		if (mode == 2) {
++			delay(1000);
++			cm3_wr(gmu, cm3_reg(GMU_HFI_CTRL_INIT), 1u);
++			printf("POLARIS GPUM2b: HFI_CTRL_INIT written twice\n");
++		}
++	} else {
++		printf("POLARIS GPUM2b: mode 4: HFI_CTRL_INIT not written\n");
++	}
+ 	uint32_t hfi = 0, intr = 0;
+ 	bool hfi_ok = false;
+ 	for (int i = 0; i < 4000; i++) {
