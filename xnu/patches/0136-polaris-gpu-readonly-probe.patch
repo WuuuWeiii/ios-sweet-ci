@@ -1,0 +1,110 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -115,6 +115,7 @@
+ bsd/dev/polaris_touch_i2c.c		standard
+ bsd/dev/polaris_gpu_diag.c		standard
+ bsd/dev/polaris_gpu.c			standard
++bsd/dev/polaris_gpu_probe.c		standard
+ bsd/dev/mem.c				standard
+ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -56,6 +56,7 @@
+ extern void polaris_touch_i2c_init(void);
+ extern void polaris_gpu_diag(void);
+ extern void polaris_gpu_init(void);
++extern void polaris_gpu_probe(void);
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -694,6 +695,7 @@
+ 	polaris_touch_i2c_init();
+ 	polaris_gpu_diag();
+ 	polaris_gpu_init();
++	polaris_gpu_probe();
+ 	sweet_usb_probe();
+ 	return 0;
+ }
+diff --git a/bsd/dev/polaris_gpu_probe.c b/bsd/dev/polaris_gpu_probe.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/polaris_gpu_probe.c
+@@ -0,0 +1,75 @@
++/*
++ * Polaris A630v2 read-only device probe (M0b).
++ *
++ * Reads only always-on blocks: QFPROM fuses and the GCC GPU clock branch
++ * status.  No GPUCC/GMU/SMMU register is touched here (those need the CX
++ * power domain; see the redwood_adreno.c step model), no write is issued.
++ * Boot-arg polarisgpudev=1 and the Polaris board predicate are both needed.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern bool polaris_touch_i2c_board(void);
++
++#define GCC_PA          0x00100000ULL
++#define GCC_SIZE        0x00090000ULL
++#define QFPROM_PA       0x00784000ULL
++#define QFPROM_SIZE     0x00008000ULL
++
++#define GCC_GPU_CFG_AHB_CBCR     0x71004u
++#define GCC_GPU_MEMNOC_GFX_CBCR  0x7100cu
++#define GCC_GPU_SNOC_DVM_CBCR    0x71018u
++#define GCC_DDRSS_GPU_AXI_CBCR   0x44038u
++#define GCC_GPU_GPLL0_VOTE       0x52004u
++
++static uint32_t
++pgp_rd(vm_offset_t base, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++void
++polaris_gpu_probe(void)
++{
++	int optin = 0;
++	(void)PE_parse_boot_argn("polarisgpudev", &optin, sizeof(optin));
++	if (optin != 1 || !polaris_touch_i2c_board()) {
++		return;
++	}
++
++	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
++	if (gcc != 0) {
++		printf("POLARIS GPUDEV: GCC gpu_cfg_ahb=0x%08x memnoc=0x%08x snoc=0x%08x ddr_axi=0x%08x gpll0_vote=0x%08x\n",
++		    pgp_rd(gcc, GCC_GPU_CFG_AHB_CBCR),
++		    pgp_rd(gcc, GCC_GPU_MEMNOC_GFX_CBCR),
++		    pgp_rd(gcc, GCC_GPU_SNOC_DVM_CBCR),
++		    pgp_rd(gcc, GCC_DDRSS_GPU_AXI_CBCR),
++		    pgp_rd(gcc, GCC_GPU_GPLL0_VOTE));
++	} else {
++		printf("POLARIS GPUDEV: GCC map failed\n");
++	}
++
++	vm_offset_t qf = ml_io_map(QFPROM_PA, QFPROM_SIZE);
++	if (qf != 0) {
++		/* QFPROM corrected region: SDM845 vendor drivers read the GPU speed
++		 * bin from the corrected fuse area (BASE + 0x4000). */
++		printf("POLARIS GPUDEV: qfprom 0x1e0: %08x %08x %08x %08x\n",
++		    pgp_rd(qf, 0x4000 + 0x1e0), pgp_rd(qf, 0x4000 + 0x1e4),
++		    pgp_rd(qf, 0x4000 + 0x1e8), pgp_rd(qf, 0x4000 + 0x1ec));
++		printf("POLARIS GPUDEV: qfprom 0x1f0: %08x %08x %08x %08x\n",
++		    pgp_rd(qf, 0x4000 + 0x1f0), pgp_rd(qf, 0x4000 + 0x1f4),
++		    pgp_rd(qf, 0x4000 + 0x1f8), pgp_rd(qf, 0x4000 + 0x1fc));
++		printf("POLARIS GPUDEV: qfprom raw 0x1e0: %08x %08x %08x %08x\n",
++		    pgp_rd(qf, 0x1e0), pgp_rd(qf, 0x1e4),
++		    pgp_rd(qf, 0x1e8), pgp_rd(qf, 0x1ec));
++	} else {
++		printf("POLARIS GPUDEV: QFPROM map failed\n");
++	}
++	printf("POLARIS GPUDEV: read-only probe done; no GPU block touched\n");
++}
++#endif
