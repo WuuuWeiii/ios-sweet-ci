@@ -1,0 +1,94 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -395,42 +395,6 @@
+ 	/* M3 config from mainline (snapshots toggle the NMI bit; keep __main) */
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_CFG), 0x4052u);
+ 
+-	printf("POLARIS GPUM2b: pre-start: sysreset=%08x fwinit=%08x bootcfg=%08x hfiaddr=%08x\n",
+-	    cm3_rd(gmu, cm3_reg(GMU_CM3_SYSRESET)), cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)),
+-	    cm3_rd(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG)), cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
+-
+-	/* Persist the console ring now: if the GMU faults the whole SoC may be
+-	 * reset by the hypervisor before the log thread flushes anything. */
+-	sweet_dbg_dump_now();
+-
+-	/* Reset the CM3, then let it run. */
+-	cm3_wr(gmu, cm3_reg(GMU_CM3_SYSRESET), 1u);
+-	__asm__ volatile ("dsb sy" ::: "memory");
+-	cm3_wr(gmu, cm3_reg(GMU_CM3_SYSRESET), 0u);
+-
+-	uint32_t result = 0;
+-	bool booted = false;
+-	for (int i = 0; i < 200; i++) {
+-		result = cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT));
+-		if (result == BOOT_RESULT_OK) {
+-			booted = true;
+-			break;
+-		}
+-		delay(1);
+-	}
+-	printf("POLARIS GPUM2b: CM3 boot result %08x (%s) after ~%d ms; fwinit=%08x\n",
+-	    result, booted ? "0xBABEFACE OK" : "not ready", 0, cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)));
+-	if (!booted) {
+-		printf("POLARIS GPUM2b: CM3 did not reach BABEFACE; stopping before HFI\n");
+-		return;
+-	}
+-
+-	/* Interrupts may carry a CM3 fault from earlier in this boot. */
+-	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 0xFFFFFFFFu);
+-	printf("POLARIS GPUM2b: after CM3 boot: intr=%08x\n",
+-	    cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO)));
+-
+-
+ 	/* Control experiment: without polarisgpuhfi=1 the CM3 is left running
+ 	 * but no HFI access is made, so a reset here would be the firmware's
+ 	 * own init and not the HFI queue memory. */
+@@ -458,6 +422,47 @@
+ 	} else {
+ 		printf("POLARIS GPUM2b: SMMU untouched (mode 0)\n");
+ 	}
++	printf("POLARIS GPUM2b: pre-start: sysreset=%08x fwinit=%08x bootcfg=%08x hfiaddr=%08x\n",
++	    cm3_rd(gmu, cm3_reg(GMU_CM3_SYSRESET)), cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)),
++	    cm3_rd(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG)), cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
++
++	/* Persist the console ring now: if the GMU faults the whole SoC may be
++	 * reset by the hypervisor before the log thread flushes anything. */
++	sweet_dbg_dump_now();
++
++	/* Reset the CM3, then let it run. */
++	cm3_wr(gmu, cm3_reg(GMU_CM3_SYSRESET), 1u);
++	__asm__ volatile ("dsb sy" ::: "memory");
++	cm3_wr(gmu, cm3_reg(GMU_CM3_SYSRESET), 0u);
++
++	uint32_t result = 0;
++	bool booted = false;
++	for (int i = 0; i < 200; i++) {
++		result = cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT));
++		if (result == BOOT_RESULT_OK) {
++			booted = true;
++			break;
++		}
++		delay(1);
++	}
++	printf("POLARIS GPUM2b: CM3 boot result %08x (%s) after ~%d ms; fwinit=%08x\n",
++	    result, booted ? "0xBABEFACE OK" : "not ready", 0, cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)));
++	if (!booted) {
++		printf("POLARIS GPUM2b: CM3 did not reach BABEFACE; stopping before HFI\n");
++		return;
++	}
++
++	/* Interrupts may carry a CM3 fault from earlier in this boot. */
++	printf("POLARIS GPUM2b: after CM3 boot: intr=%08x\n",
++	    cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO)));
++	if (hfi_optin != 1) {
++		printf("POLARIS GPUM2b: HFI skipped (polarisgpuhfi=0); CM3 left running\n");
++		sweet_dbg_dump_now();
++		return;
++	}
++	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 0xFFFFFFFFu);
++
++
+ 
+ 	/* M3: HFI queues. Clear the msg-queue interrupt mask, start HFI, wait. */
+ 	uint32_t mask = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_MASK));
