@@ -51,7 +51,7 @@ new file mode 100644
 +	const char *name;
 +	uint32_t size;
 +} gpu_blobs[GPU_BLOB_COUNT] = {
-+	{ "GPU-SQE", 32136 }, { "GPU-GMU", 32768 },
++	{ "GPU-SQE", 31980 }, { "GPU-GMU", 32768 },
 +	{ "GPU-ZAP-MDT", 6684 }, { "GPU-ZAP-B00", 148 },
 +	{ "GPU-ZAP-B01", 6536 }, { "GPU-ZAP-B02", 1968 },
 +};
