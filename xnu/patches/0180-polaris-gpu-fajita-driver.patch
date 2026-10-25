@@ -2,7 +2,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_gpu.c
-@@ -0,0 +1,3469 @@
+@@ -0,0 +1,3468 @@
 +/*
 + * Adreno 630 GPU driver for SDM845, from edi194/ios-fajita (OnePlus 6T),
 + * ported to the Xiaomi Mi MIX 2S (polaris, same SoC and GPU).
@@ -133,7 +133,6 @@ new file mode 100644
 +}
 +
 +/* not exported through the headers this file may use */
-+extern void delay(unsigned);
 +
 +#define GPU_GCC_CFG_AHB     0x71004u    /* gcc_gpu_cfg_ahb_clk, CBCR */
 +#define GPU_GCC_MEMNOC_GFX  0x7100cu
