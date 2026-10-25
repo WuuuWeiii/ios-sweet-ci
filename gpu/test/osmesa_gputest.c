@@ -17,6 +17,26 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+
+/* /dev/sweetgpu debug ioctl (kernel patch 0184): one line -> kernel log */
+struct sweet_gpu_log { char msg[1008]; };
+#define SWEET_GPU_IOCTL_LOG _IOWR('G', 0x74, struct sweet_gpu_log)
+
+static int g_gpufd = -1;
+
+static void
+klog(const char *s)
+{
+	struct sweet_gpu_log l;
+
+	if (g_gpufd < 0) {
+		return;
+	}
+	memset(&l, 0, sizeof(l));
+	strncpy(l.msg, s, sizeof(l.msg) - 1);
+	(void)ioctl(g_gpufd, SWEET_GPU_IOCTL_LOG, &l);
+}
 #include <GL/osmesa.h>
 #include <GLES2/gl2.h>
 
@@ -35,8 +55,9 @@ say(const char *fmt, ...)
 	va_start(ap, fmt);
 	n = vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
-	if (n > 0 && write(g_out, buf, (size_t)n) < 0) {
-		/* console gone: nothing better to do */
+	if (n > 0) {
+		klog(buf);
+		(void)!write(g_out, buf, (size_t)n);
 	}
 }
 
@@ -91,6 +112,7 @@ main(void)
 	    "precision mediump float;\n"
 	    "void main(void) { gl_FragColor = vec4(0.2, 0.6, 0.9, 1.0); }\n";
 
+	g_gpufd = open("/dev/sweetgpu", O_RDWR);
 	g_out = open("/dev/console", O_WRONLY);
 	if (g_out < 0) {
 		g_out = 1;
