@@ -1,0 +1,31 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -95,7 +95,10 @@
+ #define PDC_ENABLE_PDC       0x21140u
+ 
+ #define GMU_FW_WORDS        8192u
+-#define HFI_BLOB_SIZE       0x4000u
++#define HFI_BLOB_SIZE       0x8000u
++#define HFI_LOG_OFF         0x4000u
++#define GMU_PWR_COL_CP_MSG  0x1F900u
++#define GMU_PWR_COL_CP_RESP 0x1F901u
+ #define HFI_QUEUE_SIZE      4096u
+ #define HFI_QUEUE_MAX       3u
+ #define HFI_TABLE_SIZE      (6u * 4u + 48u * HFI_QUEUE_MAX)   /* 168 bytes */
+@@ -512,6 +515,15 @@
+ 	printf("POLARIS GPUM2b: rpmh_ctrl=%08x ifpc_ctrl=%08x\n",
+ 	    cm3_rd(gmu, cm3_reg(GMU_RPMH_CTRL)), cm3_rd(gmu, cm3_reg(GMU_PWR_COL_IFPC)));
+ 
++	/* GMU log buffer: the firmware logs through this iova.  With the log
++	 * pointer left at 0 its HFI init would write to address 0 and fault. */
++	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_CP_RESP), 0u);
++	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_CP_MSG),
++	    (uint32_t)(qbase + HFI_LOG_OFF) | 3u);              /* 16 KiB: size/4K-1 */
++	printf("POLARIS GPUM2b: log buffer 0x%llx -> PWR_COL_CP_MSG=%08x\n",
++	    (unsigned long long)(qbase + HFI_LOG_OFF),
++	    cm3_rd(gmu, cm3_reg(GMU_PWR_COL_CP_MSG)));
++
+ 	/* M3 config from mainline (snapshots toggle the NMI bit; keep __main) */
+ 	if (mode != 8) {
+ 		cm3_wr(gmu, cm3_reg(GMU_CM3_CFG), 0x4052u);
