@@ -1,0 +1,40 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -63,6 +63,10 @@
+ #define GMU_AHB_FENCE_STATUS  0x23B13u
+ #define GMU_AO_HOST_INTR_STATUS 0x23B05u
+ #define GMU_AO_HOST_INTR_MASK 0x23B06u
++#define GMU_RSCC_CONTROL_REQ 0x23B07u
++#define GMU_RSCC_CONTROL_ACK 0x23B08u
++#define RSCC_SEQ_BUSY_DRV0   0x23406u
++#define RSCC_ASLEEP          (1u << 24)
+ #define GMU_AHB_FENCE_RANGE0 0x23B11u
+ #define GMU_GX_SPTPRAC_POWER 0x1A881u
+ #define GMU_SPTPRAC_STATUS   0x1F8D0u
+@@ -590,6 +594,25 @@
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_SYSRESET)), cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)),
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG)), cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
+ 
++	if (hfi_optin == 1 && cm3_rd(gmu, cm3_reg(RSC_STATUS0_DRV0)) & RSCC_ASLEEP) {
++		cm3_wr(gmu, cm3_reg(GMU_RSCC_CONTROL_REQ), 2u);
++		for (int i = 0; i < 100; i++) {
++			if (cm3_rd(gmu, cm3_reg(GMU_RSCC_CONTROL_ACK)) & 2u) {
++				break;
++			}
++			delay(1);
++		}
++		for (int i = 0; i < 100; i++) {
++			if (cm3_rd(gmu, cm3_reg(RSCC_SEQ_BUSY_DRV0)) == 0u) {
++				break;
++			}
++			delay(1);
++		}
++		cm3_wr(gmu, cm3_reg(GMU_RSCC_CONTROL_REQ), 0u);
++		printf("POLARIS GPURPMH: rscc woken: ack=%08x busy=%08x\n",
++		    cm3_rd(gmu, cm3_reg(GMU_RSCC_CONTROL_ACK)),
++		    cm3_rd(gmu, cm3_reg(RSCC_SEQ_BUSY_DRV0)));
++	}
+ 	if (hfi_optin == 1 && !polaris_gpu_rpmh(gmu)) {
+ 		printf("POLARIS GPUM2b: RPMh ucode load failed\n");
+ 	}
