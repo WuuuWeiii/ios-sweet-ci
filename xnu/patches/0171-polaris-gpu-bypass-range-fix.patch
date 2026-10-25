@@ -1,0 +1,12 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -659,7 +659,7 @@
+ 	 * mode 21: power the GX power domain directly through GPUCC's GX GDSC
+ 	 * mode 22: both
+ 	 */
+-	if (mode >= 20) {
++	if (mode >= 20 && mode < 25) {
+ 		vm_offset_t gpu = ml_io_map(0x05000000ULL, 0x00010000ULL);
+ 		vm_offset_t gcc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
+ 		printf("POLARIS GPUBYPASS: mode %d gpu=%p gpucc=%p\n", mode, (void *)gpu, (void *)gcc);
