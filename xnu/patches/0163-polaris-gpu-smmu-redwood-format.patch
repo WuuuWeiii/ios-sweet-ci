@@ -1,7 +1,7 @@
 diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 --- a/bsd/dev/polaris_gpu_cm3.c
 +++ b/bsd/dev/polaris_gpu_cm3.c
-@@ -156,9 +156,15 @@
+@@ -156,9 +156,16 @@
  #define PTE_AP_UNPRIV        (1ULL << 6)
  #define PTE_SH_OUTER         (2ULL << 8)
  #define PTE_AF               (1ULL << 10)
@@ -11,23 +11,27 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
  #define PTE_NS               (1ULL << 5)
 -#define PTE_BLOCK            (PTE_VALID | PTE_AP_UNPRIV | PTE_SH_OUTER | PTE_AF)
 +#define PTE_BLOCK            (PTE_VALID | PTE_SH_OUTER | PTE_AF | PTE_NOT_GLOBAL)
-+#define SMMU_SCTLR_ON        (1u | 1u << 1 | 1u << 2 | 1u << 5 | 1u << 12)
-+#define SMMU_TCR_39          (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)
-+#define SMMU_TCR2_VAL        (1u | 1u << 4 | 7u << 15)
-+#define SMMU_MAIR0_VAL       0xf404ff44u
-+#define SMMU_CBAR_STAGE1     0x0001f300u
++/* Values from UniXNU ArmSmmu4K (qcom Adreno MMU-500 on XNU): context image */
++#define SMMU_CBAR_VAL        0x0001f300u
++#define SMMU_CBA2R_VAL       1u
++#define SMMU_MAIR0_VAL       0xff44u
++#define SMMU_SCTLR_VAL       0x1167u        /* 0x1067 | continue_after_fault<<8 */
++#define SMMU_TCR2_VAL        ((7u << 15) | (1u << 4) | 1u)   /* PA 36 bits */
  
  struct pgsm_tables {
  	uint64_t l1_pa, l2_pa, l3_pa;
-@@ -189,6 +195,7 @@
+@@ -189,6 +196,10 @@
  {
  	vm_offset_t block = 0;
  	ppnum_t pn;
-+	uint32_t ctx = (mode == 15) ? 4u : (mode == 16) ? 0u : 1u;
++	/* Which context bank carries the GMU: 1 (redwood's choice), 4
++	 * (gmu_kernel's stream 5 in the SDM845 dtsi) or 0. */
++	uint32_t bank = (mode == 15) ? 4u : (mode == 16) ? 0u : 1u;
++	uint32_t asid = bank;                       /* the tag the SMMU expects */
  
  	if (kmem_alloc_contig(kernel_map, &block, 3 * PAGE_SIZE, PAGE_MASK,
  	    (ppnum_t)0x100000, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
-@@ -214,64 +221,61 @@
+@@ -214,64 +225,73 @@
  	uint32_t i1 = (uint32_t)(HFI_GPU_VA >> 30) & 511u;
  	uint32_t i2 = (uint32_t)((HFI_GPU_VA >> 21) & 511u);
  	uint32_t i3 = (uint32_t)((HFI_GPU_VA >> 12) & 511u);
@@ -45,14 +49,10 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 -		for (uint32_t i = 0; i < hfi_size / PAGE_SIZE && i < 512u; i++) {
 -			l3[i3 + i] = (hfi_pa + (uint64_t)i * PAGE_SIZE) | page_flags;
 -		}
-+	uint64_t page_flags = PTE_PAGE;
-+	if (mode == 11) {
-+		page_flags |= PTE_NS;
-+	}
 +	l1[i1] = t->l2_pa | PTE_VALID | PTE_TABLE;
 +	l2[i2] = t->l3_pa | PTE_VALID | PTE_TABLE;
 +	for (uint32_t i = 0; i < hfi_size / PAGE_SIZE && i < 512u; i++) {
-+		l3[i3 + i] = (hfi_pa + (uint64_t)i * PAGE_SIZE) | page_flags;
++		l3[i3 + i] = (hfi_pa + (uint64_t)i * PAGE_SIZE) | PTE_PAGE;
  	}
  	flush_dcache((vm_offset_t)t->l1_va, (unsigned)(3u * PAGE_SIZE), FALSE);
  	__asm__ volatile ("dsb sy" ::: "memory");
@@ -80,28 +80,35 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 -	pgsm_wr(smmu, SMMU_S2CR(2), 0x00000000u);
 -	pgsm_wr(smmu, 0x8000u + SMMU_CB_TLBIALL, 0u);
 -	pgsm_wr(smmu, 0x8000u + SMMU_CB_TLBSYNC, 0u);
-+	/* Redwood's proven layout: TTBR0 is tagged with the context number in its
-+	 * upper 16 bits; context bank pages start after the 8 register pages. */
-+	uint32_t cb = (8u + ctx) * 0x1000u;
-+	uint64_t ttbr0 = t->l1_pa | ((uint64_t)ctx << 48);
-+	uint32_t sctlr = passthrough ? 0xE0u : SMMU_SCTLR_ON;
+-	for (int i = 0; i < 100; i++) {
+-		if ((pgsm_rd(smmu, 0x8000u + SMMU_CB_TLBSTATUS) & 1u) == 0) {
++	/* Context bank register page: (pages + bank) * stride; id1 said 8 pages
++	 * of 4 KiB and 5 banks (see the ArmSmmu4K prepare()). */
++	uint32_t cb = (8u + bank) * 0x1000u;
++	uint64_t ttbr0 = ((uint64_t)asid << 48) | t->l1_pa;
++	uint64_t ttbr1 = (uint64_t)asid << 48;       /* ArmSmmu4K leaves the tag here too */
++	uint32_t tcr = (2u << 30) | 0x3500u | (64u - 32u);   /* TG0 4K, coherent walk, T0SZ 32 */
++	uint32_t sctlr = passthrough ? 0xE0u : SMMU_SCTLR_VAL;
++	uint32_t gr1 = 0x1000u;
 +
++	/* ArmSmmu4KProgramDisabledContext order. */
 +	pgsm_wr(smmu, cb + SMMU_CB_SCTLR, 0);
-+	pgsm_wr(smmu, cb + SMMU_CB_FSR, 0xFFFFFFFFu);
-+	pgsm_wr(smmu, 0x1000u + 0x800u + 4u * ctx, 1u);      /* CBA2R: AArch64 descriptors */
-+	pgsm_wr(smmu, 0x1000u + 4u * ctx, SMMU_CBAR_STAGE1);  /* CBAR: S1 translate, S2 bypass */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	pgsm_wr(smmu, gr1 + 0x800u + bank * 4u, SMMU_CBA2R_VAL);
++	pgsm_wr(smmu, gr1 + bank * 4u, SMMU_CBAR_VAL);
++	pgsm_wr(smmu, cb + SMMU_CB_TCR2, SMMU_TCR2_VAL);
++	pgsm_wr(smmu, cb + SMMU_CB_TCR, tcr);
 +	pgsm_wr(smmu, cb + SMMU_CB_TTBR0, (uint32_t)ttbr0);
 +	pgsm_wr(smmu, cb + SMMU_CB_TTBR0 + 4u, (uint32_t)(ttbr0 >> 32));
-+	pgsm_wr(smmu, cb + SMMU_CB_TTBR1, 0u);
-+	pgsm_wr(smmu, cb + SMMU_CB_TTBR1 + 4u, 0u);
-+	pgsm_wr(smmu, cb + SMMU_CB_TCR, SMMU_TCR_39);
-+	pgsm_wr(smmu, cb + SMMU_CB_TCR2, SMMU_TCR2_VAL);
++	pgsm_wr(smmu, cb + SMMU_CB_TTBR1, (uint32_t)ttbr1);
++	pgsm_wr(smmu, cb + SMMU_CB_TTBR1 + 4u, (uint32_t)(ttbr1 >> 32));
 +	pgsm_wr(smmu, cb + SMMU_CB_MAIR0, SMMU_MAIR0_VAL);
 +	pgsm_wr(smmu, cb + SMMU_CB_MAIR1, 0u);
-+	pgsm_wr(smmu, cb + SMMU_CB_TLBIASID, ctx);
-+	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 1u);
- 	for (int i = 0; i < 100; i++) {
--		if ((pgsm_rd(smmu, 0x8000u + SMMU_CB_TLBSTATUS) & 1u) == 0) {
++	pgsm_wr(smmu, cb + SMMU_CB_FSR, 0xFFFFFFFFu);
++	/* TLBIASID then TLBSYNC/TLBSTATUS, before the bank is enabled. */
++	pgsm_wr(smmu, cb + SMMU_CB_TLBIASID, asid);
++	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 0xFFFFFFFFu);
++	for (int i = 0; i < 1000; i++) {
 +		if ((pgsm_rd(smmu, cb + SMMU_CB_TLBSTATUS) & 1u) == 0) {
  			break;
  		}
@@ -118,22 +125,32 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 -	printf("POLARIS GPUM4: HFI VA 0x%llx -> PA 0x%llx (%u bytes), tables %llx/%llx/%llx\n",
 -	    (unsigned long long)HFI_GPU_VA, (unsigned long long)hfi_pa, hfi_size,
 +	pgsm_wr(smmu, cb + SMMU_CB_SCTLR, sctlr);
-+	pgsm_wr(smmu, SMMU_S2CR(0), ctx);                        /* this context, translate */
-+	pgsm_wr(smmu, SMMU_SMR(0), 0x80000000u | (0x400u << 16) | 5u);  /* valid, mask 0x400, stream 5 */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	for (int i = 0; i < 1000; i++) {
++		if ((pgsm_rd(smmu, cb + SMMU_CB_TLBSTATUS) & 1u) == 0) {
++			break;
++		}
++		delay(1);
++	}
++	/* Attach stream 5 to this bank: S2CR = bank, SMR = valid|sid (no mask). */
++	pgsm_wr(smmu, SMMU_S2CR(0), bank);
++	pgsm_wr(smmu, SMMU_SMR(0), 0x80000000u | 5u);
 +	pgsm_wr(smmu, cb + SMMU_CB_TLBIALL, 0u);
-+	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 0u);
++	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 0xFFFFFFFFu);
 +
-+	printf("POLARIS GPUM4: ctx %u cb 0x%x ttbr0=%08x%08x sctlr=%08x cbar=%08x cba2r=%08x s2cr=%08x smr=%08x\n",
-+	    ctx, cb, pgsm_rd(smmu, cb + SMMU_CB_TTBR0 + 4u), pgsm_rd(smmu, cb + SMMU_CB_TTBR0),
-+	    pgsm_rd(smmu, cb + SMMU_CB_SCTLR), pgsm_rd(smmu, 0x1000u + 4u * ctx),
-+	    pgsm_rd(smmu, 0x1000u + 0x800u + 4u * ctx), pgsm_rd(smmu, SMMU_S2CR(0)),
-+	    pgsm_rd(smmu, SMMU_SMR(0)));
++	printf("POLARIS GPUM4: bank %u cb 0x%x ttbr0=%08x%08x tcr=%08x tcr2=%08x mair0=%08x sctlr=%08x cbar=%08x cba2r=%08x s2cr=%08x smr=%08x\n",
++	    bank, cb, pgsm_rd(smmu, cb + SMMU_CB_TTBR0 + 4u), pgsm_rd(smmu, cb + SMMU_CB_TTBR0),
++	    pgsm_rd(smmu, cb + SMMU_CB_TCR), pgsm_rd(smmu, cb + SMMU_CB_TCR2),
++	    pgsm_rd(smmu, cb + SMMU_CB_MAIR0), pgsm_rd(smmu, cb + SMMU_CB_SCTLR),
++	    pgsm_rd(smmu, gr1 + bank * 4u), pgsm_rd(smmu, gr1 + 0x800u + bank * 4u),
++	    pgsm_rd(smmu, SMMU_S2CR(0)), pgsm_rd(smmu, SMMU_SMR(0)));
 +	printf("POLARIS GPUM4: HFI VA 0x60000000 -> PA 0x%llx (%u bytes), tables %llx/%llx/%llx\n",
 +	    (unsigned long long)hfi_pa, hfi_size,
  	    (unsigned long long)t->l1_pa, (unsigned long long)t->l2_pa, (unsigned long long)t->l3_pa);
-+	printf("POLARIS GPUM4: cb0 fsr=%08x far=%08x%08x fsynr0=%08x\n",
++	printf("POLARIS GPUM4: cb fsr=%08x far=%08x%08x fsynr0=%08x gfsr=%08x scr0=%08x\n",
 +	    pgsm_rd(smmu, cb + SMMU_CB_FSR), pgsm_rd(smmu, cb + SMMU_CB_FAR + 4u),
-+	    pgsm_rd(smmu, cb + SMMU_CB_FAR), pgsm_rd(smmu, cb + SMMU_CB_FSYNR0));
++	    pgsm_rd(smmu, cb + SMMU_CB_FAR), pgsm_rd(smmu, cb + SMMU_CB_FSYNR0),
++	    pgsm_rd(smmu, 0x48u), pgsm_rd(smmu, 0x0u));
  	return true;
  }
  
