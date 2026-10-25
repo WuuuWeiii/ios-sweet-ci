@@ -1,0 +1,169 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2563,6 +2563,8 @@
+ {
+ 	int level = 0;
+ 	vm_offset_t gcc, cc, dbgc, misc, gmu, smmu, gpu, qf, db;
++	vm_offset_t g = 0;               /* the GMU memory blob (sweetfw1) */
++	uint64_t gmem_pa = 0;           /* its physical address, 64-bit */
+ 
+ 	(void)PE_parse_boot_argn("adreno", &level, sizeof(level));
+ 	if (level < 1) {
+@@ -2875,70 +2877,9 @@
+ 	uint32_t hfi_pa = GPU_GMU_VA_HFI, log_pa = GPU_GMU_VA_LOG;
+ 	printf("SWEET GPU: hfi address %#x, log address %#x (unmapped until the SMMU stage)\n", hfi_pa, log_pa);
+ 
+-	gpu_probe_wr("gmu tcm retention", gmu, GPU_GMU_GENERAL_7, 1);
+-	gpu_probe_wr("gmu hfi sfr", gmu, GPU_GMU_HFI_SFR, GPU_GMU_CHIPID);
+-	gpu_probe_wr("gmu hfi qtbl info", gmu, GPU_GMU_HFI_QTBL_INFO, 1);
+-	gpu_probe_wr("gmu hfi qtbl addr", gmu, GPU_GMU_HFI_QTBL_ADDR, hfi_pa);
+-	gpu_probe_wr("gmu log address", gmu, GPU_GMU_PWR_COL_CP_MSG, log_pa);   /* one 4 KiB unit: size - 1 = 0 */
+-	gpu_probe_wr("gmu sys bus", gmu, GPU_GMU_SYS_BUS_CONFIG, 0x1);
+-	gpu_probe_wr("gmu icache", gmu, GPU_GMU_ICACHE_CONFIG, 0x1);
+-	gpu_probe_wr("gmu dcache", gmu, GPU_GMU_DCACHE_CONFIG, 0x1);
+-	/* The RPMh interface is left alone: enabling it without the PDC/RSCC
+-	 * handshake first could leave the firmware waiting for votes nobody
+-	 * answers. Its mask (0xf11) is the next thing to try if it will not run. */
+-	gpu_probe_wr("gmu inter-frame ctrl", gmu, GPU_GMU_PWR_COL_INTER_FRAME, 0x9c40400);
+-	int polaris_rpmh_on = 1;
+-	(void)PE_parse_boot_argn("polarisgpurpmh", &polaris_rpmh_on, sizeof(polaris_rpmh_on));
+-	if (polaris_rpmh_on) {
+-		gpu_probe_wr("gmu rpmh ctrl", gmu, GPU_GMU_RPMH_CTRL, 0xf11);   /* interface + LLC/DDR/MX/CX/GFX votes */
+-	} else {
+-		printf("SWEET GPU: polaris: RPMH_CTRL left alone (polarisgpurpmh=0)\n");
+-	}
+-	gpu_probe_wr("gmu boot config", gmu, GPU_GMU_BOOT_CONFIG, 0x02);
+-	gpu_probe_wr("gmu fence range", gmu, GPU_GMU_AHB_FENCE_RANGE, 0x80000000u | (0xau << 18) | 0xa0u);
+-	gpu_probe_wr("gmu cm3 cfg", gmu, GPU_GMU_CM3_CFG, 0x4052);
+-
+-	/* out of reset: the one place a flush is worth its risk */
+-	gpu_probe_wr("gmu fw_init", gmu, GPU_GMU_FW_INIT, 0);
+-	gpu_probe_wr("gmu wfi config", gmu, GPU_GMU_WFI_CONFIG, 0);
+-	gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 1);
+-	gpu_probe_wr("gmu log write ptr", gmu, GPU_GMU_PWR_COL_CP_RESP, 0);
+-	gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 0);
+-
+-	uint32_t init = 0;
+-	for (int i = 0; i < 50; i++) {
+-		init = gpu_rd_quiet(gmu, GPU_GMU_FW_INIT);
+-		if (init == GPU_GMU_FW_RUNNING) {
+-			break;
+-		}
+-		gpu_wait_ms(1);
+-	}
+-	printf("SWEET GPU: fw_init %#x %s\n", init,
+-	    init == GPU_GMU_FW_RUNNING ? "(THE GMU FIRMWARE RUNS)" : "(the firmware did not start)");
+-	printf("SWEET GPU: polaris: cpu alive right after the firmware start\n");
+-	delay(1000);            /* 1 ms */
+-	printf("SWEET GPU: polaris: cpu still alive 1 ms later\n");
+-	delay(10000);           /* 10 ms */
+-	printf("SWEET GPU: polaris: cpu still alive 11 ms later\n");
+-	{
+-		int reset_now = 0;
+-		(void)PE_parse_boot_argn("polarisgpureset", &reset_now, sizeof(reset_now));
+-		if (reset_now) {
+-			printf("SWEET GPU: polaris: holding the GMU in reset right away\n");
+-			gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 1);
+-			printf("SWEET GPU: polaris: sysreset reads %#x\n",
+-			    gpu_rd_quiet(gmu, GPU_GMU_SYSRESET));
+-			printf("SWEET GPU: polaris: returning with the GMU held in reset\n");
+-			return;
+-		}
+-	}
+-	/* The log lives at GPU address 0x60300000 and has no kernel mapping until the
+-	 * SMMU stage maps it: reading it here is what panicked console53. */
+-	printf("SWEET GPU: stage 3d done\n");
+-	if (level < 9) {
+-		return;
+-	}
+-
++	/* polaris: the SMMU context and the HFI tables have to exist before the
++	 * firmware runs; it freezes the platform within ~10 ms of starting. */
++	if (level >= 9) {
+ 	/* ---- stage 3e: the GMU's memory, the SMMU context, and HFI ----------- */
+ 	printf("SWEET GPU: --- stage 3e: gmu memory, smmu context, hfi\n");
+ 	if (smmu == 0) {
+@@ -2956,8 +2897,8 @@
+ 	}
+ 	/* 64 bits throughout: the payload sits above 4 GB, and the SMMU takes a
+ 	 * 40-bit output address in its descriptors and a 64-bit TTBR0. */
+-	uint64_t gmem_pa = gm_pa64;
+-	vm_offset_t g = ml_io_map((vm_offset_t)gm_pa64, GPU_BLOB_BYTES);
++	gmem_pa = gm_pa64;
++	g = ml_io_map((vm_offset_t)gm_pa64, GPU_BLOB_BYTES);
+ 	if (g == 0) {
+ 		printf("SWEET GPU: cannot map the gmu memory blob\n");
+ 		return;
+@@ -3218,6 +3159,71 @@
+ 		if (!routed) {
+ 			return;
+ 		}
++	}
++
++	}
++	gpu_probe_wr("gmu tcm retention", gmu, GPU_GMU_GENERAL_7, 1);
++	gpu_probe_wr("gmu hfi sfr", gmu, GPU_GMU_HFI_SFR, GPU_GMU_CHIPID);
++	gpu_probe_wr("gmu hfi qtbl info", gmu, GPU_GMU_HFI_QTBL_INFO, 1);
++	gpu_probe_wr("gmu hfi qtbl addr", gmu, GPU_GMU_HFI_QTBL_ADDR, hfi_pa);
++	gpu_probe_wr("gmu log address", gmu, GPU_GMU_PWR_COL_CP_MSG, log_pa);   /* one 4 KiB unit: size - 1 = 0 */
++	gpu_probe_wr("gmu sys bus", gmu, GPU_GMU_SYS_BUS_CONFIG, 0x1);
++	gpu_probe_wr("gmu icache", gmu, GPU_GMU_ICACHE_CONFIG, 0x1);
++	gpu_probe_wr("gmu dcache", gmu, GPU_GMU_DCACHE_CONFIG, 0x1);
++	/* The RPMh interface is left alone: enabling it without the PDC/RSCC
++	 * handshake first could leave the firmware waiting for votes nobody
++	 * answers. Its mask (0xf11) is the next thing to try if it will not run. */
++	gpu_probe_wr("gmu inter-frame ctrl", gmu, GPU_GMU_PWR_COL_INTER_FRAME, 0x9c40400);
++	int polaris_rpmh_on = 1;
++	(void)PE_parse_boot_argn("polarisgpurpmh", &polaris_rpmh_on, sizeof(polaris_rpmh_on));
++	if (polaris_rpmh_on) {
++		gpu_probe_wr("gmu rpmh ctrl", gmu, GPU_GMU_RPMH_CTRL, 0xf11);   /* interface + LLC/DDR/MX/CX/GFX votes */
++	} else {
++		printf("SWEET GPU: polaris: RPMH_CTRL left alone (polarisgpurpmh=0)\n");
++	}
++	gpu_probe_wr("gmu boot config", gmu, GPU_GMU_BOOT_CONFIG, 0x02);
++	gpu_probe_wr("gmu fence range", gmu, GPU_GMU_AHB_FENCE_RANGE, 0x80000000u | (0xau << 18) | 0xa0u);
++	gpu_probe_wr("gmu cm3 cfg", gmu, GPU_GMU_CM3_CFG, 0x4052);
++
++	/* out of reset: the one place a flush is worth its risk */
++	gpu_probe_wr("gmu fw_init", gmu, GPU_GMU_FW_INIT, 0);
++	gpu_probe_wr("gmu wfi config", gmu, GPU_GMU_WFI_CONFIG, 0);
++	gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 1);
++	gpu_probe_wr("gmu log write ptr", gmu, GPU_GMU_PWR_COL_CP_RESP, 0);
++	gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 0);
++
++	uint32_t init = 0;
++	for (int i = 0; i < 50; i++) {
++		init = gpu_rd_quiet(gmu, GPU_GMU_FW_INIT);
++		if (init == GPU_GMU_FW_RUNNING) {
++			break;
++		}
++		gpu_wait_ms(1);
++	}
++	printf("SWEET GPU: fw_init %#x %s\n", init,
++	    init == GPU_GMU_FW_RUNNING ? "(THE GMU FIRMWARE RUNS)" : "(the firmware did not start)");
++	printf("SWEET GPU: polaris: cpu alive right after the firmware start\n");
++	delay(1000);            /* 1 ms */
++	printf("SWEET GPU: polaris: cpu still alive 1 ms later\n");
++	delay(10000);           /* 10 ms */
++	printf("SWEET GPU: polaris: cpu still alive 11 ms later\n");
++	{
++		int reset_now = 0;
++		(void)PE_parse_boot_argn("polarisgpureset", &reset_now, sizeof(reset_now));
++		if (reset_now) {
++			printf("SWEET GPU: polaris: holding the GMU in reset right away\n");
++			gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 1);
++			printf("SWEET GPU: polaris: sysreset reads %#x\n",
++			    gpu_rd_quiet(gmu, GPU_GMU_SYSRESET));
++			printf("SWEET GPU: polaris: returning with the GMU held in reset\n");
++			return;
++		}
++	}
++	/* The log lives at GPU address 0x60300000 and has no kernel mapping until the
++	 * SMMU stage maps it: reading it here is what panicked console53. */
++	printf("SWEET GPU: stage 3d done\n");
++	if (level < 9) {
++		return;
+ 	}
+ 
+ 	/* ---- HFI: start the queues and say hello ---- */
