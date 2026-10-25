@@ -1,0 +1,15 @@
+diff --git a/bsd/dev/polaris_gpu_probe.c b/bsd/dev/polaris_gpu_probe.c
+--- a/bsd/dev/polaris_gpu_probe.c
++++ b/bsd/dev/polaris_gpu_probe.c
+@@ -54,6 +54,11 @@
+ 		printf("POLARIS GPUDEV: GCC map failed\n");
+ 	}
+ 
++	if (optin < 2) {
++		printf("POLARIS GPUDEV: QFPROM skipped (needs polarisgpudev=2; the fuses hang the bus when unclocked)\n");
++		printf("POLARIS GPUDEV: read-only probe done; no GPU block touched\n");
++		return;
++	}
+ 	vm_offset_t qf = ml_io_map(QFPROM_PA, QFPROM_SIZE);
+ 	if (qf != 0) {
+ 		/* QFPROM corrected region: SDM845 vendor drivers read the GPU speed
