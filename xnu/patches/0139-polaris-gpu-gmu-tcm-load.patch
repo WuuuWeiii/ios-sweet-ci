@@ -1,0 +1,211 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -117,6 +117,7 @@
+ bsd/dev/polaris_gpu.c			standard
+ bsd/dev/polaris_gpu_probe.c		standard
+ bsd/dev/polaris_gpu_power.c		standard
++bsd/dev/polaris_gpu_gmu.c		standard
+ bsd/dev/mem.c				standard
+ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -58,6 +58,7 @@
+ extern void polaris_gpu_init(void);
+ extern void polaris_gpu_probe(void);
+ extern void polaris_gpu_power(void);
++extern void polaris_gpu_gmu(void);
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -698,6 +699,7 @@
+ 	polaris_gpu_init();
+ 	polaris_gpu_probe();
+ 	polaris_gpu_power();
++	polaris_gpu_gmu();
+ 	sweet_usb_probe();
+ 	return 0;
+ }
+diff --git a/bsd/dev/polaris_gpu_gmu.c b/bsd/dev/polaris_gpu_gmu.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/polaris_gpu_gmu.c
+@@ -0,0 +1,176 @@
++/*
++ * Polaris A630v2 M2: load the flat a630_gmu.bin firmware into the GMU's ITCM
++ * and read it back.  The CM3 is NOT released from reset here (that needs the
++ * HFI queue table and is M2b); this step only proves the firmware handoff.
++ *
++ * Register indices and semantics: the SDM845 GPU GMU block is mapped at
++ * 0x0506a000 (0x30000 long) inside the GPU register window at 0x05000000, so
++ * GMU byte offset = GPU_BASE + reg*4 - 0x6a000.  Firmware load mode TCM_BOOT
++ * (2) and the 8192-word ITCM window follow the vendor kgsl a6xx sequence.
++ *
++ * Boot-arg polarisgpugmu=1 plus the Polaris board predicate.  Any failure
++ * stops before the next write; the CPU display path is untouched.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++#include <kern/clock.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern bool polaris_touch_i2c_board(void);
++
++#define GCC_PA              0x00100000ULL
++#define GCC_SIZE            0x00090000ULL
++#define GPUCC_PA            0x05090000ULL
++#define GPUCC_SIZE          0x00010000ULL
++#define GMU_PA              0x0506a000ULL
++#define GMU_SIZE            0x00030000ULL
++#define GMU_GPU_BASE        0x05000000ULL
++#define GMU_WINDOW_OFF      (GMU_PA - GMU_GPU_BASE)     /* 0x6a000 */
++
++/* GPUCC (drivers/clk/qcom/gpucc-sdm845.c) */
++#define GPUCC_CX_GDSCR      0x106cu
++#define GPUCC_CX_HW_CTRL    0x1540u
++#define GPUCC_CX_GMU_CBCR   0x1098u
++#define GPUCC_CXO_CBCR      0x109cu
++#define GPUCC_GMU_RCGR      0x1120u
++
++#define GDSC_SW_COLLAPSE    (1u << 0)
++#define GDSC_POWER_ON       (1u << 31)
++#define CBCR_ENABLE         (1u << 0)
++#define CBCR_OFF            (1u << 31)
++
++/* GMU registers (dword indices, vendor a6xx_reg.h) */
++#define GMU_CM3_ITCM_START  0x1B400u
++#define GMU_CM3_SYSRESET    0x1F800u
++#define GMU_CM3_BOOT_CONFIG 0x1F801u
++#define GMU_CM3_FW_INIT     0x1F81Cu
++#define GMU_GENERAL_7       0x1F9CCu
++
++#define GMU_FW_WORDS        8192u
++
++static uint32_t
++gm2_rd(vm_offset_t base, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++gm2_wr(vm_offset_t base, uint32_t off, uint32_t v)
++{
++	*(volatile uint32_t *)(base + off) = v;
++	__asm__ volatile ("dsb sy; dmb oshld" ::: "memory");
++}
++
++static bool
++gm2_blob(uint64_t *phys, uint64_t *size)
++{
++	DTEntry mmap;
++	const void *value = NULL;
++	unsigned int length = 0;
++
++	if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &mmap) != kSuccess ||
++	    SecureDTGetProperty(mmap, "GPU-GMU", &value, &length) != kSuccess ||
++	    value == NULL || length != 16) {
++		return false;
++	}
++	memcpy(phys, value, sizeof(*phys));
++	memcpy(size, (const uint8_t *)value + sizeof(*phys), sizeof(*size));
++	return true;
++}
++
++void
++polaris_gpu_gmu(void)
++{
++	int optin = 0;
++	(void)PE_parse_boot_argn("polarisgpugmu", &optin, sizeof(optin));
++	if (optin != 1 || !polaris_touch_i2c_board()) {
++		return;
++	}
++
++	uint64_t blob_pa = 0, blob_size = 0;
++	if (!gm2_blob(&blob_pa, &blob_size) || blob_size != GMU_FW_WORDS * 4) {
++		printf("POLARIS GPUM2: GPU-GMU blob missing or wrong size (%llu bytes)\n",
++		    (unsigned long long)blob_size);
++		return;
++	}
++	printf("POLARIS GPUM2: firmware blob at 0x%llx, %llu bytes\n",
++	    (unsigned long long)blob_pa, (unsigned long long)blob_size);
++
++	vm_offset_t fw = ml_io_map((vm_offset_t)blob_pa, (vm_size_t)blob_size);
++	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
++	vm_offset_t gpucc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
++	vm_offset_t gmu = ml_io_map(GMU_PA, GMU_SIZE);
++	if (fw == 0 || gcc == 0 || gpucc == 0 || gmu == 0) {
++		printf("POLARIS GPUM2: mapping failed (fw %p gcc %p gpucc %p gmu %p)\n",
++		    (void *)fw, (void *)gcc, (void *)gpucc, (void *)gmu);
++		return;
++	}
++
++	/* Make sure CX is on and the GMU/CXO clocks run (same as M1). */
++	uint32_t gdscr = gm2_rd(gpucc, GPUCC_CX_GDSCR);
++	uint32_t hw = gm2_rd(gpucc, GPUCC_CX_HW_CTRL);
++	if (((gdscr | hw) & GDSC_POWER_ON) == 0) {
++		gm2_wr(gpucc, GPUCC_CX_GDSCR, gdscr & ~GDSC_SW_COLLAPSE);
++		for (int i = 0; i < 500; i++) {
++			if (((gm2_rd(gpucc, GPUCC_CX_GDSCR) | gm2_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) != 0) {
++				break;
++			}
++			delay(1);
++		}
++	}
++	if (((gm2_rd(gpucc, GPUCC_CX_GDSCR) | gm2_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) == 0) {
++		printf("POLARIS GPUM2: CX did not come on, stopping\n");
++		return;
++	}
++	gm2_wr(gpucc, GPUCC_CXO_CBCR, gm2_rd(gpucc, GPUCC_CXO_CBCR) | CBCR_ENABLE);
++	gm2_wr(gpucc, GPUCC_GMU_RCGR + 4, (gm2_rd(gpucc, GPUCC_GMU_RCGR + 4) & ~0x371fu) | (6u << 8) | 2u);
++	gm2_wr(gpucc, GPUCC_GMU_RCGR, gm2_rd(gpucc, GPUCC_GMU_RCGR) | 1u);
++	for (int i = 0; i < 100; i++) {
++		if ((gm2_rd(gpucc, GPUCC_GMU_RCGR) & 1u) == 0) {
++			break;
++		}
++		delay(1);
++	}
++	gm2_wr(gpucc, GPUCC_CX_GMU_CBCR, gm2_rd(gpucc, GPUCC_CX_GMU_CBCR) | CBCR_ENABLE);
++
++	printf("POLARIS GPUM2: before load: sysreset=%08x bootconfig=%08x fwinit=%08x general7=%08x\n",
++	    gm2_rd(gmu, ((GMU_CM3_SYSRESET << 2) - GMU_WINDOW_OFF)),
++	    gm2_rd(gmu, ((GMU_CM3_BOOT_CONFIG << 2) - GMU_WINDOW_OFF)),
++	    gm2_rd(gmu, ((GMU_CM3_FW_INIT << 2) - GMU_WINDOW_OFF)),
++	    gm2_rd(gmu, ((GMU_GENERAL_7 << 2) - GMU_WINDOW_OFF)));
++
++	/* TCM retention on, then the 8192 firmware words. */
++	gm2_wr(gmu, ((GMU_GENERAL_7 << 2) - GMU_WINDOW_OFF), 1);
++
++	uint32_t ok = 0, bad = 0;
++	for (uint32_t i = 0; i < GMU_FW_WORDS; i++) {
++		uint32_t word = gm2_rd(fw, i * 4);
++		gm2_wr(gmu, ((GMU_CM3_ITCM_START + i) << 2) - GMU_WINDOW_OFF, word);
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	for (uint32_t i = 0; i < GMU_FW_WORDS; i++) {
++		uint32_t want = gm2_rd(fw, i * 4);
++		uint32_t got = gm2_rd(gmu, ((GMU_CM3_ITCM_START + i) << 2) - GMU_WINDOW_OFF);
++		if (want == got) {
++			ok++;
++		} else {
++			if (bad < 4) {
++				printf("POLARIS GPUM2: word %u mismatch want %08x got %08x\n", i, want, got);
++			}
++			bad++;
++		}
++	}
++	printf("POLARIS GPUM2: TCM load verified: %u/%u words equal, %u mismatched; CM3 kept in reset\n",
++	    ok, GMU_FW_WORDS, bad);
++	printf("POLARIS GPUM2: after load: sysreset=%08x general7=%08x\n",
++	    gm2_rd(gmu, ((GMU_CM3_SYSRESET << 2) - GMU_WINDOW_OFF)),
++	    gm2_rd(gmu, ((GMU_GENERAL_7 << 2) - GMU_WINDOW_OFF)));
++}
++#endif
