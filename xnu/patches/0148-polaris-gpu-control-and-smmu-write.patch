@@ -1,0 +1,45 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -276,6 +276,17 @@
+ 	    sptprac_ok ? "on" : "NOT ready", sptprac);
+ 	sweet_dbg_dump_now();
+ 
++	/* Control experiment: without polarisgpuhfi=1 the CM3 is left running
++	 * but no HFI access is made, so a reset here would be the firmware's
++	 * own init and not the HFI queue memory. */
++	int hfi_optin = 0;
++	(void)PE_parse_boot_argn("polarisgpuhfi", &hfi_optin, sizeof(hfi_optin));
++	if (hfi_optin != 1) {
++		printf("POLARIS GPUM2b: HFI skipped (polarisgpuhfi=0); CM3 left running\n");
++		sweet_dbg_dump_now();
++		return;
++	}
++
+ 	/* M3: HFI queues. Clear the msg-queue interrupt mask, start HFI, wait. */
+ 	uint32_t mask = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_MASK));
+ 	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_MASK), mask & ~1u);
+diff --git a/bsd/dev/polaris_gpu_smmu.c b/bsd/dev/polaris_gpu_smmu.c
+--- a/bsd/dev/polaris_gpu_smmu.c
++++ b/bsd/dev/polaris_gpu_smmu.c
+@@ -183,6 +183,20 @@
+ 		sm_wr(smmu, SMMU_S2CR(0), 0x00010005u);
+ 		__asm__ volatile ("dsb sy" ::: "memory");
+ 		printf("POLARIS GPUSMMU: after s2cr0=00010005: s2cr0=%08x\n", sm_rd(smmu, SMMU_S2CR(0)));
++
++		/* Is any SMMU register writable at all?  Try context bank 0 and the
++		 * CBAR/CBA2R pair the way topaz (SM6225) programs them. */
++		printf("POLARIS GPUSMMU: before cb writes: cb0=%08x cbar0=%08x cba2r0=%08x\n",
++		    sm_rd(smmu, 0x8000u), sm_rd(smmu, page), sm_rd(smmu, page + SMMU_CBA2R_OFF));
++		sm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, 0x67u);
++		sm_wr(smmu, page, 0x0001f000u);                        /* CBAR0: S1 translate, S2 bypass */
++		sm_wr(smmu, page + SMMU_CBA2R_OFF, 1u);                 /* CBA2R0: AArch64 descriptors */
++		__asm__ volatile ("dsb sy" ::: "memory");
++		printf("POLARIS GPUSMMU: after cb writes: cb0=%08x cbar0=%08x cba2r0=%08x\n",
++		    sm_rd(smmu, 0x8000u + SMMU_CB_SCTLR), sm_rd(smmu, page), sm_rd(smmu, page + SMMU_CBA2R_OFF));
++		sm_wr(smmu, SMMU_S2CR(0), 0x00000000u);                 /* translate -> CB0 */
++		__asm__ volatile ("dsb sy" ::: "memory");
++		printf("POLARIS GPUSMMU: after s2cr0=0(translate cb0): s2cr0=%08x\n", sm_rd(smmu, SMMU_S2CR(0)));
+ 		sweet_dbg_dump_now();
+ 	}
+ 	printf("POLARIS GPUSMMU: probe done\n");
