@@ -1,0 +1,71 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -58,6 +58,12 @@
+ #define GMU_AHB_FENCE_RANGE0 0x23B11u
+ #define GMU_GX_SPTPRAC_POWER 0x1A881u
+ #define GMU_SPTPRAC_STATUS   0x1F8D0u
++#define GMU_CM3_CFG          0x1F82Du
++#define GMU_BOOT_SLUMBER     0x1CBF8u
++#define GMU_GX_VOTE_IDX      0x1CBF9u
++#define GMU_MX_VOTE_IDX      0x1CBFAu
++#define GMU_HOST2GMU_INTR_SET 0x1F994u
++#define GMU_GMU2HOST_INTR_CLR 0x1F991u
+ 
+ #define GMU_FW_WORDS        8192u
+ #define HFI_BLOB_SIZE       0x4000u
+@@ -372,6 +378,9 @@
+ 	cm3_wr(gmu, cm3_reg(GMU_SYS_BUS_CONFIG), 0x1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_IFPC), 0x9C40400u);
+ 
++	/* M3 config from mainline (snapshots toggle the NMI bit; keep __main) */
++	cm3_wr(gmu, cm3_reg(GMU_CM3_CFG), 0x4052u);
++
+ 	printf("POLARIS GPUM2b: pre-start: sysreset=%08x fwinit=%08x bootcfg=%08x hfiaddr=%08x\n",
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_SYSRESET)), cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)),
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG)), cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
+@@ -402,11 +411,35 @@
+ 		return;
+ 	}
+ 
++	/* Interrupts may carry a CM3 fault from earlier in this boot. */
++	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 0xFFFFFFFFu);
++	printf("POLARIS GPUM2b: after CM3 boot: intr=%08x\n",
++	    cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO)));
++
++	/* legacy a630: gfx rail on through the boot/slumber OOB handshake */
++	cm3_wr(gmu, cm3_reg(GMU_BOOT_SLUMBER), 0u);
++	cm3_wr(gmu, cm3_reg(GMU_GX_VOTE_IDX), 0u);
++	cm3_wr(gmu, cm3_reg(GMU_MX_VOTE_IDX), 0u);
++	cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 22);   /* OOB BOOT_SLUMBER set */
++	uint32_t oob = 0;
++	bool oob_ok = false;
++	for (int i = 0; i < 200; i++) {
++		oob = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO));
++		if (oob & (1u << 30)) {
++			oob_ok = true;
++			break;
++		}
++		delay(1);
++	}
++	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 1u << 30);
++	printf("POLARIS GPUM2b: gfx rail OOB %s (intr %08x)\n",
++	    oob_ok ? "acknowledged" : "TIMEOUT", oob);
++
+ 	/* SPTPRAC must be powered on before HFI (vendor a6xx_sptprac_enable). */
+ 	cm3_wr(gmu, cm3_reg(GMU_GX_SPTPRAC_POWER), 0x00778000u);
+ 	uint32_t sptprac = 0;
+ 	bool sptprac_ok = false;
+-	for (int i = 0; i < 20; i++) {
++	for (int i = 0; i < 200; i++) {
+ 		sptprac = cm3_rd(gmu, cm3_reg(GMU_SPTPRAC_STATUS));
+ 		if (sptprac & (1u << 3)) {
+ 			sptprac_ok = true;
+@@ -446,6 +479,7 @@
+ 	/* M3: HFI queues. Clear the msg-queue interrupt mask, start HFI, wait. */
+ 	uint32_t mask = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_MASK));
+ 	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_MASK), mask & ~1u);
++	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 0xFFFFFFFFu);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_CTRL_INIT), 1u);
+ 	uint32_t hfi = 0, intr = 0;
+ 	bool hfi_ok = false;
