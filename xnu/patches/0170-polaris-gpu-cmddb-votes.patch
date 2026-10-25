@@ -1,0 +1,174 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -50,6 +50,8 @@
+ #define GMU_DCACHE_CONFIG   0x1F401u
+ #define GMU_HFI_VERSION_INFO 0x1F981u
+ #define GMU_DTCM_VERSION    0x1D3F8u   /* CM3_DTCM_START + 0xff8 words */
++#define CMD_DB_PHYS         0x861e0000ULL
++#define CMD_DB_SIZE         0x00020000ULL
+ #define GMU_PWR_COL_IFPC    0x1F8C0u
+ #define GMU_PWR_COL_IFPC_HYST 0x1F8C1u
+ #define GMU_RPMH_CTRL       0x1F8E8u
+@@ -206,6 +208,77 @@
+ /* Allocate three 4 KiB tables from one contiguous, sub-4-GiB block and map
+  * the HFI page at HFI_GPU_VA; program context bank 0 and stream 5 (GMU
+  * kernel, dt gmu_kernel iommus = <&kgsl_smmu 5>). */
++
++/* RPMh command database (cmd-db): the boot loader's list of what RPMh can
++ * switch and the voltage levels of each rail.  The GMU firmware indexes the
++ * levels by their position in these tables, which is what the BOOT_SLUMBER
++ * OOB request wants (ported from HakiOS redwood_adreno.c). */
++struct cmd_db_slave {
++	uint16_t id, header_offset, data_offset, count, version, reserved[3];
++};
++struct cmd_db_header {
++	uint32_t version;
++	uint8_t magic[4];
++	struct cmd_db_slave slave[8];
++	uint32_t checksum, reserved;
++	uint8_t data[];
++};
++struct cmd_db_entry {
++	char id[8];
++	uint32_t priority[2];
++	uint32_t address;
++	uint16_t length, offset;
++};
++
++static vm_offset_t cmd_db_va;
++
++static uint32_t
++polaris_rpmh_levels(const char *name, uint16_t *levels, unsigned *level_count)
++{
++	if (level_count != NULL) {
++		*level_count = 0;
++	}
++	if (cmd_db_va == 0) {
++		cmd_db_va = ml_io_map(CMD_DB_PHYS, (vm_size_t)CMD_DB_SIZE);
++	}
++	if (cmd_db_va == 0) {
++		return 0;
++	}
++	const struct cmd_db_header *db = (const struct cmd_db_header *)cmd_db_va;
++	char id[8] = { 0 };
++	for (int i = 0; i < 7 && name[i] != 0; i++) {
++		id[i] = name[i];
++	}
++	for (unsigned sl = 0; sl < 8; sl++) {
++		const struct cmd_db_slave *slave = &db->slave[sl];
++		if (slave->id == 0 || slave->count > 512) {
++			continue;
++		}
++		const struct cmd_db_entry *entry =
++		    (const struct cmd_db_entry *)(db->data + slave->header_offset);
++		for (unsigned i = 0; i < slave->count; i++) {
++			const uint8_t *data = db->data + slave->data_offset + entry[i].offset;
++			unsigned count = entry[i].length / 2u;
++			bool same = true;
++			for (int k = 0; k < 8; k++) {
++				if (entry[i].id[k] != id[k]) {
++					same = false;
++					break;
++				}
++			}
++			if (!same) {
++				continue;
++			}
++			for (unsigned l = 0; levels != NULL && l < count && l < 16; l++) {
++				levels[l] = (uint16_t)(data[2 * l] | data[2 * l + 1] << 8);
++				*level_count = l + 1;
++			}
++			return entry[i].address;
++		}
++	}
++	return 0;
++}
++
+ static bool
+ pgsm_setup(uint64_t hfi_pa, uint32_t hfi_size, struct pgsm_tables *t, vm_offset_t smmu,
+     bool passthrough, int mode)
+@@ -778,6 +851,65 @@
+ 		}
+ 	}
+ 
++	/* Power the GPU the way the quirk (qcom,gpu-quirk-hfi-use-reg) says: an
++	 * OOB BOOT_SLUMBER request to the running firmware.  The two vote indices
++	 * are positions in the RPMh level tables of gfx.lvl / mx.lvl. */
++	if (mode >= 30) {
++		static uint16_t gfx_levels[16], mx_levels[16];
++		unsigned gfx_count = 0, mx_count = 0;
++		uint32_t gfx_addr = polaris_rpmh_levels("gfx.lvl", gfx_levels, &gfx_count);
++		uint32_t mx_addr = polaris_rpmh_levels("mx.lvl", mx_levels, &mx_count);
++		if (gfx_addr == 0) {
++			gfx_addr = polaris_rpmh_levels("gfx", gfx_levels, &gfx_count);
++		}
++		if (mx_addr == 0) {
++			mx_addr = polaris_rpmh_levels("mx", mx_levels, &mx_count);
++		}
++		printf("POLARIS GPURPMH: cmd-db magic %02x%02x%02x%02x gfx@%x n=%u mx@%x n=%u\n",
++		    ((const uint8_t *)cmd_db_va)[4], ((const uint8_t *)cmd_db_va)[5],
++		    ((const uint8_t *)cmd_db_va)[6], ((const uint8_t *)cmd_db_va)[7],
++		    gfx_addr, gfx_count, mx_addr, mx_count);
++		for (unsigned i = 0; i < gfx_count; i++) {
++			printf("POLARIS GPURPMH: gfx lvl[%u]=%u\n", i, gfx_levels[i]);
++		}
++		for (unsigned i = 0; i < mx_count; i++) {
++			printf("POLARIS GPURPMH: mx lvl[%u]=%u\n", i, mx_levels[i]);
++		}
++		uint32_t pri = gfx_count ? gfx_count - 1 : 0;
++		uint32_t sec = mx_count ? mx_count - 1 : 0;
++		cm3_wr(gmu, cm3_reg(GMU_BOOT_SLUMBER), 0u);
++		cm3_wr(gmu, cm3_reg(GMU_GX_VOTE_IDX), pri);
++		cm3_wr(gmu, cm3_reg(GMU_MX_VOTE_IDX), sec);
++		cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 22);
++		uint32_t info = 0;
++		for (int i = 0; i < 2000; i++) {
++			info = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO));
++			if (info & (1u << 30)) {
++				break;
++			}
++			delay(1);
++		}
++		printf("POLARIS GPURPMH: boot_slumber pri=%u sec=%u ack=%08x power=%08x\n",
++		    pri, sec, info, cm3_rd(gmu, cm3_reg(0x1F8ECu)));
++		cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 1u << 30);
++		cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 30);
++		if (mode == 31 && (info & (1u << 30))) {
++			cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 16);
++			info = 0;
++			for (int i = 0; i < 2000; i++) {
++				info = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO));
++				if (info & (1u << 24)) {
++					break;
++				}
++				delay(1);
++			}
++			printf("POLARIS GPURPMH: gpu_set ack=%08x power=%08x\n",
++			    info, cm3_rd(gmu, cm3_reg(0x1F8ECu)));
++			cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 1u << 24);
++			cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 24);
++		}
++	}
++
+ 	/* M3: HFI queues. Clear the msg-queue interrupt mask, start HFI, wait. */
+ 	if (mode == 6) {
+ 		cm3_wr(gmu, cm3_reg(GMU_HFI_CTRL_STATUS), 0u);
+@@ -825,6 +957,17 @@
+ 		}
+ 	}
+ 	sweet_dbg_dump_now();
++	{
++		uint32_t next = cm3_rd(gmu, cm3_reg(GMU_PWR_COL_CP_RESP)) & 0xffffu;
++		const volatile uint32_t *log =
++		    (const volatile uint32_t *)(hfi_va + HFI_LOG_OFF);
++		printf("POLARIS GPULOG: wptr=%u\n", next);
++		uint32_t from = next > 24 ? next - 24 : 0;
++		for (uint32_t e = from; e < next && e < 1024; e++) {
++			printf("POLARIS GPULOG: %u: %08x %08x %08x %08x\n", e,
++			    log[4 * e], log[4 * e + 1], log[4 * e + 2], log[4 * e + 3]);
++		}
++	}
+ 	printf("POLARIS GPUM2b: done: CM3 runs=%s HFI=%s; GX/CP still untouched\n",
+ 	    booted ? "yes" : "no", hfi_ok ? "yes" : "no");
+ }
