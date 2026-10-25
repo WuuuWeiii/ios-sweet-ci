@@ -1,0 +1,92 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -154,6 +154,8 @@
+ #define PTE_SH_OUTER         (2ULL << 8)
+ #define PTE_AF               (1ULL << 10)
+ #define PTE_PAGE             (PTE_VALID | PTE_TABLE | PTE_AP_UNPRIV | PTE_SH_OUTER | PTE_AF)
++#define PTE_NS               (1ULL << 5)
++#define PTE_BLOCK            (PTE_VALID | PTE_AP_UNPRIV | PTE_SH_OUTER | PTE_AF)
+ 
+ struct pgsm_tables {
+ 	uint64_t l1_pa, l2_pa, l3_pa;
+@@ -180,7 +182,7 @@
+  * kernel, dt gmu_kernel iommus = <&kgsl_smmu 5>). */
+ static bool
+ pgsm_setup(uint64_t hfi_pa, uint32_t hfi_size, struct pgsm_tables *t, vm_offset_t smmu,
+-    bool passthrough)
++    bool passthrough, int mode)
+ {
+ 	vm_offset_t block = 0;
+ 	ppnum_t pn;
+@@ -209,10 +211,20 @@
+ 	uint32_t i1 = (uint32_t)(HFI_GPU_VA >> 30) & 511u;
+ 	uint32_t i2 = (uint32_t)((HFI_GPU_VA >> 21) & 511u);
+ 	uint32_t i3 = (uint32_t)((HFI_GPU_VA >> 12) & 511u);
+-	l1[i1] = t->l2_pa | PTE_VALID | PTE_TABLE;
+-	l2[i2] = t->l3_pa | PTE_VALID | PTE_TABLE;
+-	for (uint32_t i = 0; i < hfi_size / PAGE_SIZE && i < 512u; i++) {
+-		l3[i3 + i] = (hfi_pa + (uint64_t)i * PAGE_SIZE) | PTE_PAGE;
++	if (mode == 14) {
++		/* 2 MiB block at level 2: VA 0x60000000 -> the aligned block */
++		l1[i1] = t->l2_pa | PTE_VALID | PTE_TABLE;
++		l2[i2] = hfi_pa | PTE_BLOCK;
++	} else {
++		l1[i1] = t->l2_pa | PTE_VALID | PTE_TABLE;
++		l2[i2] = t->l3_pa | PTE_VALID | PTE_TABLE;
++		uint64_t page_flags = PTE_PAGE | ((mode == 11) ? PTE_NS : 0);
++		uint64_t table_flags = PTE_VALID | PTE_TABLE | ((mode == 11) ? PTE_NS : 0);
++		l1[i1] = t->l2_pa | table_flags;
++		l2[i2] = t->l3_pa | table_flags;
++		for (uint32_t i = 0; i < hfi_size / PAGE_SIZE && i < 512u; i++) {
++			l3[i3 + i] = (hfi_pa + (uint64_t)i * PAGE_SIZE) | page_flags;
++		}
+ 	}
+ 	flush_dcache((vm_offset_t)t->l1_va, (unsigned)(3u * PAGE_SIZE), FALSE);
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+@@ -220,7 +232,7 @@
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, 0);
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_FSR, 0xFFFFFFFFu);
+ 	pgsm_wr(smmu, SMMU_CBA2R(0), 1u);                 /* AArch64 descriptors */
+-	pgsm_wr(smmu, SMMU_CBAR(0), 0x0001f000u);         /* S1 translate, S2 bypass */
++	pgsm_wr(smmu, SMMU_CBAR(0), (mode == 12) ? 0x00010000u : 0x0001f000u);
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_TTBR0, (uint32_t)t->l1_pa);
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_TTBR0 + 4u, (uint32_t)(t->l1_pa >> 32));
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_TCR, 32u | (1u << 23));   /* T0SZ 32, 4 KB, NC walks, EPD1 */
+@@ -232,7 +244,7 @@
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, passthrough ? 0xE0u : 0x67u);
+ 	/* The GMU's AHB master id is not documented on this phone: route the
+ 	 * three plausible streams (5 gmu_kernel, 4 gmu_user, 0 GPU) to CB0. */
+-	pgsm_wr(smmu, SMMU_SMR(0), 0x80000005u);                  /* SMR0: valid, SID 5 */
++	pgsm_wr(smmu, SMMU_SMR(0), (mode == 13) ? 0xFFFF0000u : 0x80000005u);
+ 	pgsm_wr(smmu, SMMU_S2CR(0), 0x00000000u);                 /* S2CR0: translate -> CB0 */
+ 	pgsm_wr(smmu, SMMU_SMR(1), 0x80000004u);                  /* SMR1: valid, SID 4 */
+ 	pgsm_wr(smmu, SMMU_S2CR(1), 0x00000000u);
+@@ -379,7 +391,8 @@
+ 	/* The GMU's HFI queue table address is a 32-bit bus address: allocate the
+ 	 * 16 KiB page-aligned table below 4 GiB (max_pnum = 0x100000 4 KiB pages). */
+ 	vm_offset_t hfi_va_off = 0;
+-	if (kmem_alloc_contig(kernel_map, &hfi_va_off, HFI_BLOB_SIZE, PAGE_MASK,
++	vm_offset_t hfi_align = (mode == 14) ? 0x1FFFFF : PAGE_MASK;
++	if (kmem_alloc_contig(kernel_map, &hfi_va_off, HFI_BLOB_SIZE, hfi_align,
+ 	    (ppnum_t)0x100000, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
+ 	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS || hfi_va_off == 0) {
+ 		printf("POLARIS GPUM2b: no HFI memory below 4 GiB\n");
+@@ -392,7 +405,7 @@
+ 	}
+ 	hfi_pa = ((uint64_t)hfi_pn) << 12;
+ 	hfi_va = hfi_va_off;
+-	uint64_t qbase = (mode == 3) ? HFI_GPU_VA : hfi_pa;
++	uint64_t qbase = (mode == 3 || mode >= 10) ? HFI_GPU_VA : hfi_pa;
+ 	printf("POLARIS GPUM2b: HFI mode %d, qtable address 0x%llx\n", mode,
+ 	    (unsigned long long)qbase);
+ 	printf("POLARIS GPUM2b: HFI table at low phys 0x%llx (kv 0x%llx)\n",
+@@ -520,7 +533,7 @@
+ 		vm_offset_t smmu = ml_io_map(SMMU_BASE, SMMU_SIZE);
+ 		struct pgsm_tables tables = {0, 0, 0, 0, 0, 0};
+ 		bool pass = (mode != 3);
+-		if (smmu == 0 || !pgsm_setup(hfi_pa, HFI_BLOB_SIZE, &tables, smmu, pass)) {
++		if (smmu == 0 || !pgsm_setup(hfi_pa, HFI_BLOB_SIZE, &tables, smmu, pass, mode)) {
+ 			printf("POLARIS GPUM2b: SMMU setup failed; not starting HFI\n");
+ 			return;
+ 		}
