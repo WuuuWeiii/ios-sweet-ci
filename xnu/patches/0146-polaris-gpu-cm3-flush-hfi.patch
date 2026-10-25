@@ -1,0 +1,41 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -21,6 +21,7 @@
+ extern bool polaris_touch_i2c_board(void);
+ extern void sweet_dbg_dump_now(void);
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
++extern void flush_dcache(vm_offset_t addr, unsigned count, boolean_t phys);
+ 
+ #define GCC_PA              0x00100000ULL
+ #define GCC_SIZE            0x00090000ULL
+@@ -186,15 +187,7 @@
+ 
+ 	/* Build the HFI queue table in the GPU-HFI blob (physical address is
+ 	 * what the firmware receives as its queue-table address). */
+-	/* The table must be visible to the GMU through the physical address: a
+-	 * cached kernel mapping could still hold the zeroes in the CPU cache.
+-	 * Use an uncached device mapping for the table writes. */
+-	vm_offset_t hfi_io = ml_io_map((vm_offset_t)hfi_pa, HFI_BLOB_SIZE);
+-	if (hfi_io == 0) {
+-		printf("POLARIS GPUM2b: cannot map the HFI table uncached\n");
+-		return;
+-	}
+-	uint8_t *t = (uint8_t *)hfi_io;
++	uint8_t *t = (uint8_t *)hfi_va;
+ 	memset(t, 0, (size_t)HFI_BLOB_SIZE);
+ 	uint32_t *w = (uint32_t *)t;
+ 	struct {
+@@ -218,8 +211,11 @@
+ 		h[8] = 1;                              /* tx_wm */
+ 		h[9] = 1;                              /* rx_req */
+ 	}
++	/* The GMU reads the table through the physical address: clean the CPU
++	 * cache to the point of coherency first. */
++	flush_dcache((vm_offset_t)hfi_va, (unsigned)HFI_BLOB_SIZE, FALSE);
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+-	printf("POLARIS GPUM2b: HFI table at phys 0x%llx (16 KiB), qsize=%u\n",
++	printf("POLARIS GPUM2b: HFI table at phys 0x%llx (16 KiB), qsize=%u (flushed)\n",
+ 	    (unsigned long long)hfi_pa, HFI_QUEUE_SIZE);
+ 
+ 	/* Program the GMU before releasing reset. */
