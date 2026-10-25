@@ -81,14 +81,14 @@ needs_exe_wrapper = true
 EOT
 BLD="$WORK/build-hw"
 if [ ! -d "$BLD" ]; then
-  ( cd mesa && meson setup "$BLD" --cross-file "$CROSS" --buildtype=release \
+  ( cd mesa && PKG_CONFIG_PATH="$WORK/pc" PKG_CONFIG_LIBDIR="$WORK/pc" meson setup "$BLD" --cross-file "$CROSS" --buildtype=release \
     -Dgallium-drivers=softpipe,freedreno -Dfreedreno-kmds=msm -Dgallium-xa=disabled -Dtools= \
     -Dvulkan-drivers= -Dllvm=disabled -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dplatforms= \
     -Dosmesa=true -Dopengl=true -Dgles1=enabled -Dgles2=enabled -Dshared-glapi=enabled \
     -Dvalgrind=disabled -Dlibunwind=disabled -Dzstd=disabled -Dxmlconfig=disabled -Dbuild-tests=false \
     -Dglvnd=disabled -Dlmsensors=disabled -Dgallium-opencl=disabled -Dgallium-rusticl=false )
 fi
-ninja -C "$BLD" src/gallium/targets/osmesa/libOSMesa.8.dylib
+PKG_CONFIG_PATH="$WORK/pc" PKG_CONFIG_LIBDIR="$WORK/pc" ninja -C "$BLD" src/gallium/targets/osmesa/libOSMesa.8.dylib
 mkdir -p "$WORK/out"
 cp -f "$BLD/src/gallium/targets/osmesa/libOSMesa.8.dylib" "$WORK/out/"
 cp -f "$WORK/drm-standin/libdrm.2.dylib" "$WORK/out/"
