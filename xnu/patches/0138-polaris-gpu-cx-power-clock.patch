@@ -32,7 +32,7 @@ diff --git a/bsd/dev/polaris_gpu_power.c b/bsd/dev/polaris_gpu_power.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/polaris_gpu_power.c
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,193 @@
 +/*
 + * Polaris A630v2 M1: switch the CX half of the GPU block on and run its
 + * clocks (GPUCC).  Nothing of the 3D core (GX/CP) is touched here.
@@ -46,6 +46,7 @@ new file mode 100644
 +#include <sys/param.h>
 +#include <sys/systm.h>
 +#include <pexpert/pexpert.h>
++#include <kern/clock.h>
 +
 +extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 +extern bool polaris_touch_i2c_board(void);
