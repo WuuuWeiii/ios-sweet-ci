@@ -3475,7 +3475,7 @@ new file mode 100644
 diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -115,6 +115,7 @@
+@@ -1,5 +1,6 @@
  bsd/dev/polaris_gpu.c			standard
  bsd/dev/polaris_gpu_probe.c		standard
 +bsd/dev/sweet_gpu.c			standard
@@ -3485,17 +3485,13 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -56,6 +56,7 @@
- extern void polaris_gpu_diag(void);
+@@ -1,10 +1,12 @@
  extern void polaris_gpu_init(void);
  extern void polaris_gpu_probe(void);
 +extern void sweet_gpu_probe(void);
  extern void sweet_usb_probe(void);
  
- #define REG_CAP         0x00
-@@ -695,6 +696,7 @@
- 	polaris_touch_i2c_init();
- 	polaris_gpu_diag();
+ #define REG_CAP
  	polaris_gpu_init();
  	polaris_gpu_probe();
 +	sweet_gpu_probe();
