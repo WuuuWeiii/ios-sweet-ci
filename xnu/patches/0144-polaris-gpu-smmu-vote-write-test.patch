@@ -1,0 +1,46 @@
+diff --git a/bsd/dev/polaris_gpu_smmu.c b/bsd/dev/polaris_gpu_smmu.c
+--- a/bsd/dev/polaris_gpu_smmu.c
++++ b/bsd/dev/polaris_gpu_smmu.c
+@@ -33,6 +33,8 @@
+ #define GDSC_SW_COLLAPSE    (1u << 0)
+ #define GDSC_POWER_ON       (1u << 31)
+ #define CBCR_ENABLE         (1u << 0)
++#define CBCR_OFF            (1u << 31)
++#define GPUCC_SMMU_VOTE_CBCR 0x5000u
+ 
+ #define SMMU_SCR0       0x000u
+ #define SMMU_IDR0       0x020u
+@@ -156,11 +158,31 @@
+ 	(void)PE_parse_boot_argn("polarisgpusmmubypass", &bypass, sizeof(bypass));
+ 	if (bypass == 1) {
+ 		sweet_dbg_dump_now();
++		/* The SMMU needs its vote clock before its registers accept writes
++		 * (redwood_adreno.c enables gpu_cc_hlos1_vote_gpu_smmu_clk first). */
++		uint32_t vote = sm_rd(gpucc, GPUCC_SMMU_VOTE_CBCR);
++		printf("POLARIS GPUSMMU: smmu vote cbcr before=%08x\n", vote);
++		sm_wr(gpucc, GPUCC_SMMU_VOTE_CBCR, vote | CBCR_ENABLE);
++		for (int i = 0; i < 100; i++) {
++			if ((sm_rd(gpucc, GPUCC_SMMU_VOTE_CBCR) & CBCR_OFF) == 0) {
++				break;
++			}
++			delay(1);
++		}
++		printf("POLARIS GPUSMMU: smmu vote cbcr after=%08x\n",
++		    sm_rd(gpucc, GPUCC_SMMU_VOTE_CBCR));
++
+ 		sm_wr(smmu, SMMU_SMR(0), 0x80000005u);
++		printf("POLARIS GPUSMMU: after smr0 write: smr0=%08x\n", sm_rd(smmu, SMMU_SMR(0)));
+ 		sm_wr(smmu, SMMU_S2CR(0), 0x000100ffu);
+ 		__asm__ volatile ("dsb sy" ::: "memory");
+-		printf("POLARIS GPUSMMU: bypass set: smr0=%08x s2cr0=%08x\n",
+-		    sm_rd(smmu, SMMU_SMR(0)), sm_rd(smmu, SMMU_S2CR(0)));
++		printf("POLARIS GPUSMMU: after s2cr0=000100ff: s2cr0=%08x\n", sm_rd(smmu, SMMU_S2CR(0)));
++		sm_wr(smmu, SMMU_S2CR(0), 0x00010000u);
++		__asm__ volatile ("dsb sy" ::: "memory");
++		printf("POLARIS GPUSMMU: after s2cr0=00010000: s2cr0=%08x\n", sm_rd(smmu, SMMU_S2CR(0)));
++		sm_wr(smmu, SMMU_S2CR(0), 0x00010005u);
++		__asm__ volatile ("dsb sy" ::: "memory");
++		printf("POLARIS GPUSMMU: after s2cr0=00010005: s2cr0=%08x\n", sm_rd(smmu, SMMU_S2CR(0)));
+ 		sweet_dbg_dump_now();
+ 	}
+ 	printf("POLARIS GPUSMMU: probe done\n");
