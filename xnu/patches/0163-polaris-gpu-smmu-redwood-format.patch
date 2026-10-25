@@ -1,7 +1,22 @@
 diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 --- a/bsd/dev/polaris_gpu_cm3.c
 +++ b/bsd/dev/polaris_gpu_cm3.c
-@@ -156,9 +156,16 @@
+@@ -140,12 +140,14 @@
+ #define SMMU_CB_SCTLR        0x00u
+ #define SMMU_CB_TCR2         0x10u
+ #define SMMU_CB_TTBR0        0x20u
++#define SMMU_CB_TTBR1        0x28u
+ #define SMMU_CB_TCR          0x30u
+ #define SMMU_CB_MAIR0        0x38u
+ #define SMMU_CB_MAIR1        0x3cu
+ #define SMMU_CB_FSR          0x58u
+ #define SMMU_CB_FAR          0x60u
+ #define SMMU_CB_FSYNR0       0x68u
++#define SMMU_CB_TLBIASID     0x610u
+ #define SMMU_CB_TLBIALL      0x618u
+ #define SMMU_CB_TLBSYNC      0x7f0u
+ #define SMMU_CB_TLBSTATUS    0x7f4u
+@@ -156,9 +158,16 @@
  #define PTE_AP_UNPRIV        (1ULL << 6)
  #define PTE_SH_OUTER         (2ULL << 8)
  #define PTE_AF               (1ULL << 10)
@@ -11,27 +26,25 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
  #define PTE_NS               (1ULL << 5)
 -#define PTE_BLOCK            (PTE_VALID | PTE_AP_UNPRIV | PTE_SH_OUTER | PTE_AF)
 +#define PTE_BLOCK            (PTE_VALID | PTE_SH_OUTER | PTE_AF | PTE_NOT_GLOBAL)
-+/* Values from UniXNU ArmSmmu4K (qcom Adreno MMU-500 on XNU): context image */
++/* Values from UniXNU ArmSmmu4K (qcom Adreno MMU-500 on XNU) */
 +#define SMMU_CBAR_VAL        0x0001f300u
 +#define SMMU_CBA2R_VAL       1u
 +#define SMMU_MAIR0_VAL       0xff44u
-+#define SMMU_SCTLR_VAL       0x1167u        /* 0x1067 | continue_after_fault<<8 */
-+#define SMMU_TCR2_VAL        ((7u << 15) | (1u << 4) | 1u)   /* PA 36 bits */
++#define SMMU_SCTLR_VAL       0x1167u
++#define SMMU_TCR2_VAL        ((7u << 15) | (1u << 4) | 1u)
  
  struct pgsm_tables {
  	uint64_t l1_pa, l2_pa, l3_pa;
-@@ -189,6 +196,10 @@
+@@ -189,6 +198,8 @@
  {
  	vm_offset_t block = 0;
  	ppnum_t pn;
-+	/* Which context bank carries the GMU: 1 (redwood's choice), 4
-+	 * (gmu_kernel's stream 5 in the SDM845 dtsi) or 0. */
 +	uint32_t bank = (mode == 15) ? 4u : (mode == 16) ? 0u : 1u;
-+	uint32_t asid = bank;                       /* the tag the SMMU expects */
++	uint32_t asid = bank;
  
  	if (kmem_alloc_contig(kernel_map, &block, 3 * PAGE_SIZE, PAGE_MASK,
  	    (ppnum_t)0x100000, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
-@@ -214,64 +225,73 @@
+@@ -214,64 +225,68 @@
  	uint32_t i1 = (uint32_t)(HFI_GPU_VA >> 30) & 511u;
  	uint32_t i2 = (uint32_t)((HFI_GPU_VA >> 21) & 511u);
  	uint32_t i3 = (uint32_t)((HFI_GPU_VA >> 12) & 511u);
@@ -82,16 +95,13 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 -	pgsm_wr(smmu, 0x8000u + SMMU_CB_TLBSYNC, 0u);
 -	for (int i = 0; i < 100; i++) {
 -		if ((pgsm_rd(smmu, 0x8000u + SMMU_CB_TLBSTATUS) & 1u) == 0) {
-+	/* Context bank register page: (pages + bank) * stride; id1 said 8 pages
-+	 * of 4 KiB and 5 banks (see the ArmSmmu4K prepare()). */
 +	uint32_t cb = (8u + bank) * 0x1000u;
 +	uint64_t ttbr0 = ((uint64_t)asid << 48) | t->l1_pa;
-+	uint64_t ttbr1 = (uint64_t)asid << 48;       /* ArmSmmu4K leaves the tag here too */
-+	uint32_t tcr = (2u << 30) | 0x3500u | (64u - 32u);   /* TG0 4K, coherent walk, T0SZ 32 */
++	uint64_t ttbr1 = (uint64_t)asid << 48;
++	uint32_t tcr = (2u << 30) | 0x3500u | (64u - 32u);
 +	uint32_t sctlr = passthrough ? 0xE0u : SMMU_SCTLR_VAL;
 +	uint32_t gr1 = 0x1000u;
 +
-+	/* ArmSmmu4KProgramDisabledContext order. */
 +	pgsm_wr(smmu, cb + SMMU_CB_SCTLR, 0);
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	pgsm_wr(smmu, gr1 + 0x800u + bank * 4u, SMMU_CBA2R_VAL);
@@ -105,7 +115,6 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 +	pgsm_wr(smmu, cb + SMMU_CB_MAIR0, SMMU_MAIR0_VAL);
 +	pgsm_wr(smmu, cb + SMMU_CB_MAIR1, 0u);
 +	pgsm_wr(smmu, cb + SMMU_CB_FSR, 0xFFFFFFFFu);
-+	/* TLBIASID then TLBSYNC/TLBSTATUS, before the bank is enabled. */
 +	pgsm_wr(smmu, cb + SMMU_CB_TLBIASID, asid);
 +	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 0xFFFFFFFFu);
 +	for (int i = 0; i < 1000; i++) {
@@ -126,17 +135,16 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
 -	    (unsigned long long)HFI_GPU_VA, (unsigned long long)hfi_pa, hfi_size,
 +	pgsm_wr(smmu, cb + SMMU_CB_SCTLR, sctlr);
 +	__asm__ volatile ("dsb sy" ::: "memory");
++	pgsm_wr(smmu, SMMU_S2CR(0), bank);
++	pgsm_wr(smmu, SMMU_SMR(0), 0x80000000u | 5u);
++	pgsm_wr(smmu, cb + SMMU_CB_TLBIALL, 0u);
++	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 0xFFFFFFFFu);
 +	for (int i = 0; i < 1000; i++) {
 +		if ((pgsm_rd(smmu, cb + SMMU_CB_TLBSTATUS) & 1u) == 0) {
 +			break;
 +		}
 +		delay(1);
 +	}
-+	/* Attach stream 5 to this bank: S2CR = bank, SMR = valid|sid (no mask). */
-+	pgsm_wr(smmu, SMMU_S2CR(0), bank);
-+	pgsm_wr(smmu, SMMU_SMR(0), 0x80000000u | 5u);
-+	pgsm_wr(smmu, cb + SMMU_CB_TLBIALL, 0u);
-+	pgsm_wr(smmu, cb + SMMU_CB_TLBSYNC, 0xFFFFFFFFu);
 +
 +	printf("POLARIS GPUM4: bank %u cb 0x%x ttbr0=%08x%08x tcr=%08x tcr2=%08x mair0=%08x sctlr=%08x cbar=%08x cba2r=%08x s2cr=%08x smr=%08x\n",
 +	    bank, cb, pgsm_rd(smmu, cb + SMMU_CB_TTBR0 + 4u), pgsm_rd(smmu, cb + SMMU_CB_TTBR0),
