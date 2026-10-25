@@ -1,0 +1,48 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -389,6 +389,7 @@
+ #define SWEET_GPU_IOC_SUBMIT_N     0x46u
+ #define SWEET_GPU_IOC_WAIT_N       0x47u
+ #define SWEET_GPU_IOC_CLOSE_N      0x09u
++#define SWEET_GPU_IOC_LOG_N        0x74u
+ 
+ #define SWEET_GPU_INFO_GET_IOVA    1u
+ #define SWEET_GPU_INFO_GET_SIZE    2u
+@@ -438,6 +439,12 @@
+ struct sweet_gpu_close {
+ 	uint32_t handle;
+ 	uint32_t pad;
++};
++
++/* Debug: one NUL-terminated line from userland goes to the kernel log (the iOS
++ * console can be muted, and a test that runs where nobody can see it is useless). */
++struct sweet_gpu_log {
++	char msg[1008];
+ };
+ 
+ /*
+@@ -451,6 +458,7 @@
+ #define SWEET_GPU_IOCTL_GEM_SUBMIT _IOWR(SWEET_GPU_IOC_GROUP, SWEET_GPU_IOC_SUBMIT_N, struct sweet_gpu_gem_submit)
+ #define SWEET_GPU_IOCTL_WAIT_FENCE _IOWR(SWEET_GPU_IOC_GROUP, SWEET_GPU_IOC_WAIT_N, struct sweet_gpu_wait)
+ #define SWEET_GPU_IOCTL_GEM_CLOSE  _IOWR(SWEET_GPU_IOC_GROUP, SWEET_GPU_IOC_CLOSE_N, struct sweet_gpu_close)
++#define SWEET_GPU_IOCTL_LOG        _IOWR(SWEET_GPU_IOC_GROUP, SWEET_GPU_IOC_LOG_N, struct sweet_gpu_log)
+ 
+ struct gpu_bo {
+ 	vm_offset_t kva;        /* the kernel alias, write-combined */
+@@ -1989,6 +1997,15 @@
+ 		return gpu_client_gem_close((struct sweet_gpu_close *)data);
+ 	case SWEET_GPU_IOCTL_SELECT:
+ 		return gpu_client_select((struct sweet_gpu_select *)data);
++	case SWEET_GPU_IOCTL_LOG: {
++		struct sweet_gpu_log *log = (struct sweet_gpu_log *)data;
++
++		log->msg[sizeof(log->msg) - 1] = 0;
++		if (log->msg[0] != 0) {
++			printf("SWEETGLOG: %s\n", log->msg);
++		}
++		return 0;
++	}
+ 	default:
+ 		return ENOTTY;
+ 	}
