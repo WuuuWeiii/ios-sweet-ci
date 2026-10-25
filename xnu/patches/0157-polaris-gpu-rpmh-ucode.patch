@@ -1,0 +1,123 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -64,6 +64,32 @@
+ #define GMU_MX_VOTE_IDX      0x1CBFAu
+ #define GMU_HOST2GMU_INTR_SET 0x1F994u
+ #define GMU_GMU2HOST_INTR_CLR 0x1F991u
++#define PDC_PA               0x0b200000ULL
++#define PDC_SIZE             0x00300000ULL
++#define RSC_STATUS0_DRV0     0x23404u
++#define RSC_PDC_SLAVE_ID     0x2340Bu
++#define RSC_HIDDEN_DATA      0x2340Eu
++#define RSC_HIDDEN_ADDR      0x2340Du
++#define RSC_OVERRIDE_START   0x23500u
++#define RSC_PDC_SEQ_START    0x23408u
++#define RSC_PDC_MATCH_LO     0x23409u
++#define RSC_PDC_MATCH_HI     0x2340Au
++#define RSC_SEQ_MEM0         0x23580u
++#define PDC_SEQ_MEM0         0xA0000u
++#define PDC_TCS1_ENABLE      0x21573u
++#define PDC_TCS1_WAIT        0x21574u
++#define PDC_TCS1_CONTROL     0x21572u
++#define PDC_TCS1_MSGID       0x21575u
++#define PDC_TCS1_ADDR        0x21576u
++#define PDC_TCS1_DATA        0x21577u
++#define PDC_TCS3_ENABLE      0x215D7u
++#define PDC_TCS3_WAIT        0x215D8u
++#define PDC_TCS3_CONTROL     0x215D6u
++#define PDC_TCS3_MSGID       0x215D9u
++#define PDC_TCS3_ADDR        0x215DAu
++#define PDC_TCS3_DATA        0x215DBu
++#define PDC_SEQ_START_ADDR   0x21148u
++#define PDC_ENABLE_PDC       0x21140u
+ 
+ #define GMU_FW_WORDS        8192u
+ #define HFI_BLOB_SIZE       0x4000u
+@@ -250,6 +276,75 @@
+ 	}
+ 	*va = ml_io_map((vm_offset_t)*phys, (vm_size_t)*size);
+ 	return *va != 0;
++}
++
++/*
++ * Polaris A630v2: load the RSC/PDC RPMh sequencer ucode (vendor
++ * _load_gmu_rpmh_ucode).  The GMU firmware drives the GPU power rails through
++ * RPMh; without this ucode its HFI initialisation faults the CM3.
++ */
++static bool
++polaris_gpu_rpmh(vm_offset_t gmu)
++{
++	vm_offset_t pdc = ml_io_map(PDC_PA, PDC_SIZE);
++	if (pdc == 0) {
++		printf("POLARIS GPURPMH: no PDC mapping\n");
++		return false;
++	}
++	/* RSC registers live in the GMU window. */
++	cm3_wr(gmu, cm3_reg(RSC_STATUS0_DRV0), 1u << 24);
++	cm3_wr(gmu, cm3_reg(RSC_PDC_SLAVE_ID), 1u);
++	cm3_wr(gmu, cm3_reg(RSC_HIDDEN_DATA), 0u);
++	cm3_wr(gmu, cm3_reg(RSC_HIDDEN_ADDR), 0u);
++	cm3_wr(gmu, cm3_reg(RSC_HIDDEN_DATA + 2u), 0u);
++	cm3_wr(gmu, cm3_reg(RSC_HIDDEN_ADDR + 2u), 0u);
++	cm3_wr(gmu, cm3_reg(RSC_HIDDEN_DATA + 4u), 0x80000000u);
++	cm3_wr(gmu, cm3_reg(RSC_HIDDEN_ADDR + 4u), 0u);
++	cm3_wr(gmu, cm3_reg(RSC_OVERRIDE_START), 0u);
++	cm3_wr(gmu, cm3_reg(RSC_PDC_SEQ_START), 0x4520u);
++	cm3_wr(gmu, cm3_reg(RSC_PDC_MATCH_LO), 0x4510u);
++	cm3_wr(gmu, cm3_reg(RSC_PDC_MATCH_HI), 0x4514u);
++	static const uint32_t rsc_seq[5] = {
++		0xA7A506A0u, 0xA1E6A6E7u, 0xA2E081E1u, 0xE9A982E2u, 0x0020E8A8u };
++	for (uint32_t i = 0; i < 5; i++) {
++		cm3_wr(gmu, cm3_reg(RSC_SEQ_MEM0 + i), rsc_seq[i]);
++	}
++
++	/* PDC sequencer ucode and TCS commands (word offsets). */
++	static const uint32_t pdc_seq[5] = {
++		0xFEBEA1E1u, 0xA5A4A3A2u, 0x8382A6E0u, 0xBCE3E284u, 0x002081FCu };
++	for (uint32_t i = 0; i < 5; i++) {
++		*(volatile uint32_t *)(pdc + (PDC_SEQ_MEM0 + i) * 4u) = pdc_seq[i];
++	}
++	*(volatile uint32_t *)(pdc + PDC_TCS1_ENABLE * 4u) = 7u;
++	*(volatile uint32_t *)(pdc + PDC_TCS1_WAIT * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + PDC_TCS1_CONTROL * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + PDC_TCS1_MSGID * 4u) = 0x10108u;
++	*(volatile uint32_t *)(pdc + PDC_TCS1_ADDR * 4u) = 0x30010u;
++	*(volatile uint32_t *)(pdc + PDC_TCS1_DATA * 4u) = 1u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS1_MSGID + 4u) * 4u) = 0x10108u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS1_ADDR + 4u) * 4u) = 0x30000u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS1_DATA + 4u) * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS1_MSGID + 8u) * 4u) = 0x10108u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS1_ADDR + 8u) * 4u) = 0x30080u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS1_DATA + 8u) * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + PDC_TCS3_ENABLE * 4u) = 7u;
++	*(volatile uint32_t *)(pdc + PDC_TCS3_WAIT * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + PDC_TCS3_CONTROL * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + PDC_TCS3_MSGID * 4u) = 0x10108u;
++	*(volatile uint32_t *)(pdc + PDC_TCS3_ADDR * 4u) = 0x30010u;
++	*(volatile uint32_t *)(pdc + PDC_TCS3_DATA * 4u) = 2u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS3_MSGID + 4u) * 4u) = 0x10108u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS3_ADDR + 4u) * 4u) = 0x30000u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS3_DATA + 4u) * 4u) = 3u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS3_MSGID + 8u) * 4u) = 0x10108u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS3_ADDR + 8u) * 4u) = 0x30080u;
++	*(volatile uint32_t *)(pdc + (PDC_TCS3_DATA + 8u) * 4u) = 3u;
++	*(volatile uint32_t *)(pdc + PDC_SEQ_START_ADDR * 4u) = 0u;
++	*(volatile uint32_t *)(pdc + PDC_ENABLE_PDC * 4u) = 0x80000001u;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	printf("POLARIS GPURPMH: RSC/PDC ucode loaded (pdc %p)\n", (void *)pdc);
++	return true;
+ }
+ 
+ void
+@@ -426,6 +521,10 @@
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_SYSRESET)), cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)),
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG)), cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
+ 
++	if (hfi_optin == 1 && !polaris_gpu_rpmh(gmu)) {
++		printf("POLARIS GPUM2b: RPMh ucode load failed\n");
++	}
++
+ 	/* Persist the console ring now: if the GMU faults the whole SoC may be
+ 	 * reset by the hypervisor before the log thread flushes anything. */
+ 	sweet_dbg_dump_now();
