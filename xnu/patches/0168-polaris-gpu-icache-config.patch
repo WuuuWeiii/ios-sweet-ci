@@ -1,0 +1,41 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -46,6 +46,10 @@
+ #define GMU_CM3_BOOT_CONFIG 0x1F801u
+ #define GMU_CM3_FW_INIT     0x1F81Cu
+ #define GMU_SYS_BUS_CONFIG  0x1F40Fu
++#define GMU_ICACHE_CONFIG   0x1F400u
++#define GMU_DCACHE_CONFIG   0x1F401u
++#define GMU_HFI_VERSION_INFO 0x1F981u
++#define GMU_DTCM_VERSION    0x1D3F8u   /* CM3_DTCM_START + 0xff8 words */
+ #define GMU_PWR_COL_IFPC    0x1F8C0u
+ #define GMU_PWR_COL_IFPC_HYST 0x1F8C1u
+ #define GMU_RPMH_CTRL       0x1F8E8u
+@@ -538,6 +542,8 @@
+ 	    (mode >= 17) ? 0x802800A0u : FENCE_RANGE_MASK);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_SFR_ADDR), (mode == 9) ? 0u : 0x06030100u);
+ 	cm3_wr(gmu, cm3_reg(GMU_SYS_BUS_CONFIG), 0x1u);
++	cm3_wr(gmu, cm3_reg(GMU_ICACHE_CONFIG), 0x1u);
++	cm3_wr(gmu, cm3_reg(GMU_DCACHE_CONFIG), 0x1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_IFPC), 0x9C40400u);
+ 	/* Vendor a6xx_gmu_power_config: IFPC idle hysteresis/enable and, for
+ 	 * chips with the ADRENO_RPMH feature (a630v2), the RPMh client. */
+@@ -714,6 +720,17 @@
+ 	    cm3_rd(gmu, cm3_reg(GMU_AHB_FENCE_STATUS)),
+ 	    cm3_rd(gmu, cm3_reg(GMU_AO_HOST_INTR_STATUS)),
+ 	    cm3_rd(gmu, cm3_reg(GMU_AO_HOST_INTR_MASK)));
++	printf("POLARIS GPUMFW: dtcm %08x %08x %08x %08x %08x hfi_ver=%08x power=%08x sysbus=%08x icache=%08x dcache=%08x\n",
++	    cm3_rd(gmu, cm3_reg(GMU_DTCM_VERSION)),
++	    cm3_rd(gmu, cm3_reg(GMU_DTCM_VERSION + 1u)),
++	    cm3_rd(gmu, cm3_reg(GMU_DTCM_VERSION + 2u)),
++	    cm3_rd(gmu, cm3_reg(GMU_DTCM_VERSION + 3u)),
++	    cm3_rd(gmu, cm3_reg(GMU_DTCM_VERSION + 4u)),
++	    cm3_rd(gmu, cm3_reg(GMU_HFI_VERSION_INFO)),
++	    cm3_rd(gmu, cm3_reg(0x1F8ECu)),
++	    cm3_rd(gmu, cm3_reg(GMU_SYS_BUS_CONFIG)),
++	    cm3_rd(gmu, cm3_reg(GMU_ICACHE_CONFIG)),
++	    cm3_rd(gmu, cm3_reg(GMU_DCACHE_CONFIG)));
+ 	/* Interrupts may carry a CM3 fault from earlier in this boot. */
+ 	printf("POLARIS GPUM2b: after CM3 boot: intr=%08x\n",
+ 	    cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO)));
