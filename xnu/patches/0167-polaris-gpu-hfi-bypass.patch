@@ -1,0 +1,76 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -574,6 +574,72 @@
+ 		return;
+ 	}
+ 
++	/* ---- HFI bypass experiments (round 12) -------------------------------
++	 * mode 20: ask the running GMU firmware to power the GPU through the
++	 *           out-of-band interrupt registers (no HFI queues at all)
++	 * mode 21: power the GX power domain directly through GPUCC's GX GDSC
++	 * mode 22: both
++	 */
++	if (mode >= 20) {
++		vm_offset_t gpu = ml_io_map(0x05000000ULL, 0x00010000ULL);
++		vm_offset_t gcc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
++		printf("POLARIS GPUBYPASS: mode %d gpu=%p gpucc=%p\n", mode, (void *)gpu, (void *)gcc);
++		if (gpu == 0 || gcc == 0) {
++			printf("POLARIS GPUBYPASS: no mapping\n");
++			return;
++		}
++		printf("POLARIS GPUBYPASS: before gx_gdscr=%08x cx_gdscr=%08x rbbm=%08x power=%08x\n",
++		    cm3_rd(gcc, 0x100cu), cm3_rd(gcc, 0x106cu),
++		    cm3_rd(gpu, 0x210u * 4u), cm3_rd(gmu, cm3_reg(0x1F8ECu)));
++		if (mode == 20 || mode == 22) {
++			/* BOOT_SLUMBER OOB: set bit 22, ack info bit 30 */
++			cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 22);
++			uint32_t info = 0;
++			for (int i = 0; i < 1000; i++) {
++				info = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO));
++				if (info & (1u << 30)) {
++					break;
++				}
++				delay(1);
++			}
++			printf("POLARIS GPUBYPASS: boot_slumber ack info=%08x\n", info);
++			cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 1u << 30);
++			cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 30);
++			cm3_wr(gmu, cm3_reg(GMU_BOOT_SLUMBER), 0u);
++			cm3_wr(gmu, cm3_reg(GMU_GX_VOTE_IDX), 8u);
++			cm3_wr(gmu, cm3_reg(GMU_MX_VOTE_IDX), 16u);
++			/* GPU_SET OOB: set bit 16, ack info bit 24 */
++			cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 16);
++			info = 0;
++			for (int i = 0; i < 1000; i++) {
++				info = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO));
++				if (info & (1u << 24)) {
++					break;
++				}
++				delay(1);
++			}
++			printf("POLARIS GPUBYPASS: gpu_set ack info=%08x\n", info);
++			cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_INTR_CLR), 1u << 24);
++			cm3_wr(gmu, cm3_reg(GMU_HOST2GMU_INTR_SET), 1u << 24);
++		}
++		if (mode == 21 || mode == 22) {
++			uint32_t g = cm3_rd(gcc, 0x100cu);
++			cm3_wr(gcc, 0x100cu, g & ~1u);
++			for (int i = 0; i < 500; i++) {
++				if (cm3_rd(gcc, 0x100cu) & (1u << 31)) {
++					break;
++				}
++				delay(1);
++			}
++		}
++		printf("POLARIS GPUBYPASS: after gx_gdscr=%08x gx_misc=%08x cx_gdscr=%08x rbbm=%08x power=%08x info=%08x\n",
++		    cm3_rd(gcc, 0x100cu), cm3_rd(gcc, 0x1508u), cm3_rd(gcc, 0x106cu),
++		    cm3_rd(gpu, 0x210u * 4u), cm3_rd(gmu, cm3_reg(0x1F8ECu)),
++		    cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO)));
++		sweet_dbg_dump_now();
++		return;
++	}
++
+ 	/* M4 (mode dependent): set up the GPU SMMU and the qtable address. */
+ 	if (mode != 0) {
+ 		vm_offset_t smmu = ml_io_map(SMMU_BASE, SMMU_SIZE);
