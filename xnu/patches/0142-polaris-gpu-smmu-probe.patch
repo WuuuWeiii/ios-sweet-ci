@@ -1,0 +1,193 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -119,6 +119,7 @@
+ bsd/dev/polaris_gpu_power.c		standard
+ bsd/dev/polaris_gpu_gmu.c		standard
+ bsd/dev/polaris_gpu_cm3.c		standard
++bsd/dev/polaris_gpu_smmu.c		standard
+ bsd/dev/mem.c				standard
+ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -60,6 +60,7 @@
+ extern void polaris_gpu_power(void);
+ extern void polaris_gpu_gmu(void);
+ extern void polaris_gpu_cm3(void);
++extern void polaris_gpu_smmu(void);
+ extern void sweet_usb_probe(void);
+ 
+ #define REG_CAP         0x00
+@@ -701,6 +702,7 @@
+ 	polaris_gpu_probe();
+ 	polaris_gpu_power();
+ 	polaris_gpu_gmu();
++	polaris_gpu_smmu();
+ 	polaris_gpu_cm3();
+ 	sweet_usb_probe();
+ 	return 0;
+diff --git a/bsd/dev/polaris_gpu_smmu.c b/bsd/dev/polaris_gpu_smmu.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/polaris_gpu_smmu.c
+@@ -0,0 +1,158 @@
++/*
++ * Polaris A630v2 M4a: read-only probe of the GPU's SMMU (kgsl-smmu-v2 at
++ * 0x05040000).  The GMU reaches its HFI queue memory through this SMMU, so
++ * the queue table address must be a GPU (translated) address; this probe only
++ * reports the layout and the current stream table, it writes nothing.
++ *
++ * Boot-arg polarisgpusmmu=1 + the Polaris board predicate.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <pexpert/pexpert.h>
++#include <kern/clock.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern bool polaris_touch_i2c_board(void);
++
++#define GCC_PA              0x00100000ULL
++#define GCC_SIZE            0x00090000ULL
++#define GPUCC_PA            0x05090000ULL
++#define GPUCC_SIZE          0x00010000ULL
++#define SMMU_PA             0x05040000ULL
++#define SMMU_SIZE           0x00010000ULL
++
++#define GCC_GPU_CFG_AHB_CBCR   0x71004u
++#define GCC_GPU_MEMNOC_CBCR    0x7100cu
++#define GCC_GPU_SNOC_CBCR      0x71018u
++#define GCC_DDRSS_GPU_AXI      0x44038u
++
++#define GPUCC_CX_GDSCR      0x106cu
++#define GPUCC_CX_HW_CTRL    0x1540u
++#define GDSC_SW_COLLAPSE    (1u << 0)
++#define GDSC_POWER_ON       (1u << 31)
++#define CBCR_ENABLE         (1u << 0)
++
++#define SMMU_SCR0       0x000u
++#define SMMU_IDR0       0x020u
++#define SMMU_IDR1       0x024u
++#define SMMU_IDR2       0x028u
++#define SMMU_IDR7       0x03cu
++#define SMMU_SGFSR      0x048u
++#define SMMU_SMR(n)     (0x800u + 4u * (n))
++#define SMMU_S2CR(n)    (0xc00u + 4u * (n))
++#define SMMU_CBA2R_OFF  0x800u
++
++#define SMMU_CB_SCTLR   0x00u
++#define SMMU_CB_TTBR0   0x20u
++#define SMMU_CB_TCR     0x30u
++#define SMMU_CB_FSR     0x58u
++#define SMMU_CB_FAR     0x60u
++#define SMMU_CB_TTBR1   0x28u
++#define SMMU_CB_MAIR0   0x38u
++
++static uint32_t
++sm_rd(vm_offset_t base, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++sm_wr(vm_offset_t base, uint32_t off, uint32_t v)
++{
++	*(volatile uint32_t *)(base + off) = v;
++	__asm__ volatile ("dsb sy; dmb oshld" ::: "memory");
++}
++
++void
++polaris_gpu_smmu(void)
++{
++	int optin = 0;
++	(void)PE_parse_boot_argn("polarisgpusmmu", &optin, sizeof(optin));
++	if (optin != 1 || !polaris_touch_i2c_board()) {
++		return;
++	}
++
++	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
++	vm_offset_t gpucc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
++	vm_offset_t smmu = ml_io_map(SMMU_PA, SMMU_SIZE);
++	if (gcc == 0 || gpucc == 0 || smmu == 0) {
++		printf("POLARIS GPUSMMU: mapping failed (gcc %p gpucc %p smmu %p)\n",
++		    (void *)gcc, (void *)gpucc, (void *)smmu);
++		return;
++	}
++
++	/* CX on + the GCC GPU clocks the SMMU needs (iface/mem/mem-iface). */
++	uint32_t gdscr = sm_rd(gpucc, GPUCC_CX_GDSCR);
++	if (((gdscr | sm_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) == 0) {
++		sm_wr(gpucc, GPUCC_CX_GDSCR, gdscr & ~GDSC_SW_COLLAPSE);
++		for (int i = 0; i < 500; i++) {
++			if (((sm_rd(gpucc, GPUCC_CX_GDSCR) | sm_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) != 0) {
++				break;
++			}
++			delay(1);
++		}
++	}
++	if (((sm_rd(gpucc, GPUCC_CX_GDSCR) | sm_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) == 0) {
++		printf("POLARIS GPUSMMU: CX is off; SMMU registers unreachable\n");
++		return;
++	}
++	sm_wr(gcc, GCC_GPU_CFG_AHB_CBCR, sm_rd(gcc, GCC_GPU_CFG_AHB_CBCR) | CBCR_ENABLE);
++	for (int i = 0; i < 100; i++) {
++		if ((sm_rd(gcc, GCC_GPU_CFG_AHB_CBCR) & (1u << 31)) == 0) {
++			break;
++		}
++		delay(1);
++	}
++	sm_wr(gcc, GCC_GPU_MEMNOC_CBCR, sm_rd(gcc, GCC_GPU_MEMNOC_CBCR) | CBCR_ENABLE);
++	sm_wr(gcc, GCC_GPU_SNOC_CBCR, sm_rd(gcc, GCC_GPU_SNOC_CBCR) | CBCR_ENABLE);
++	sm_wr(gcc, GCC_DDRSS_GPU_AXI, sm_rd(gcc, GCC_DDRSS_GPU_AXI) | CBCR_ENABLE);
++
++	uint32_t idr0 = sm_rd(smmu, SMMU_IDR0);
++	uint32_t idr1 = sm_rd(smmu, SMMU_IDR1);
++	printf("POLARIS GPUSMMU: idr0=%08x idr1=%08x idr2=%08x idr7=%08x scr0=%08x sgfsr=%08x\n",
++	    idr0, idr1, sm_rd(smmu, SMMU_IDR2), sm_rd(smmu, SMMU_IDR7),
++	    sm_rd(smmu, SMMU_SCR0), sm_rd(smmu, SMMU_SGFSR));
++
++	uint32_t page = (idr1 >> 31) ? 0x10000u : 0x1000u;
++	uint32_t pages = 2u << ((idr1 >> 28) & 7u);
++	uint32_t contexts = idr1 & 0xffu;
++	uint32_t matches = idr0 & 0xffu;
++	printf("POLARIS GPUSMMU: page=%x pages=%u contexts=%u matches=%u (regs %x)\n",
++	    page, pages, contexts, matches, 2u * pages * page);
++
++	uint32_t n = matches < 32 ? matches : 32;
++	for (uint32_t i = 0; i < n; i++) {
++		printf("POLARIS GPUSMMU: stream %u smr=%08x s2cr=%08x\n",
++		    i, sm_rd(smmu, SMMU_SMR(i)), sm_rd(smmu, SMMU_S2CR(i)));
++	}
++	for (uint32_t i = 0; i < contexts && i < 8; i++) {
++		uint32_t cbar = sm_rd(smmu, page + i * 4u);
++		uint32_t cba2r = sm_rd(smmu, page + SMMU_CBA2R_OFF + i * 4u);
++		printf("POLARIS GPUSMMU: cb%u cbar=%08x cba2r=%08x\n", i, cbar, cba2r);
++	}
++
++	/* Context-bank pages, starting after the global register pages. */
++	uint32_t cb_base = pages * page;
++	for (uint32_t i = 0; i < contexts && i < 6; i++) {
++		uint32_t at = cb_base + i * page;
++		printf("POLARIS GPUSMMU: cb%u sctlr=%08x ttbr0=%08x:%08x tcr=%08x fsr=%08x far=%08x\n",
++		    i, sm_rd(smmu, at + SMMU_CB_SCTLR),
++		    sm_rd(smmu, at + SMMU_CB_TTBR0 + 4u), sm_rd(smmu, at + SMMU_CB_TTBR0),
++		    sm_rd(smmu, at + SMMU_CB_TCR), sm_rd(smmu, at + SMMU_CB_FSR),
++		    sm_rd(smmu, at + SMMU_CB_FAR));
++	}
++
++	/* The micro-MMU block at 0x6000 (dt: qcom,micro-mmu-control) holds the
++	 * GMU's own contexts; CB4 = GMU user, CB5 = GMU kernel (dtsi). */
++	printf("POLARIS GPUSMMU: micrommu 6000: sctlr=%08x ttbr0=%08x tcr=%08x fsr=%08x\n",
++	    sm_rd(smmu, 0x6000u + SMMU_CB_SCTLR), sm_rd(smmu, 0x6000u + SMMU_CB_TTBR0),
++	    sm_rd(smmu, 0x6000u + SMMU_CB_TCR), sm_rd(smmu, 0x6000u + SMMU_CB_FSR));
++	printf("POLARIS GPUSMMU: micrommu 7000: sctlr=%08x ttbr0=%08x tcr=%08x fsr=%08x\n",
++	    sm_rd(smmu, 0x7000u + SMMU_CB_SCTLR), sm_rd(smmu, 0x7000u + SMMU_CB_TTBR0),
++	    sm_rd(smmu, 0x7000u + SMMU_CB_TCR), sm_rd(smmu, 0x7000u + SMMU_CB_FSR));
++	printf("POLARIS GPUSMMU: read-only probe done; nothing written to the SMMU\n");
++}
++#endif
