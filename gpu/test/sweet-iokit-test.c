@@ -20,6 +20,39 @@
 #include <string.h>
 #include <stdint.h>
 
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <stdarg.h>
+
+/* /dev/sweetgpu debug ioctl (kernel patch 0184): one line -> kernel log.
+ * The iOS console is muted, so this is how a userspace test reports anything. */
+struct sweet_gpu_log { char msg[1008]; };
+#define SWEET_GPU_IOCTL_LOG _IOWR('G', 0x74, struct sweet_gpu_log)
+
+static int g_gpufd = -1;
+
+static void
+klog(const char *s)
+{
+	struct sweet_gpu_log l;
+
+	if (g_gpufd < 0) {
+		return;
+	}
+	memset(&l, 0, sizeof(l));
+	strncpy(l.msg, s, sizeof(l.msg) - 1);
+	(void)ioctl(g_gpufd, SWEET_GPU_IOCTL_LOG, &l);
+}
+
+/* every printf of this test goes to the kernel log (and to stderr as a backup) */
+#define printf(...) do {                                             \
+		char _kb[1008];                                       \
+		snprintf(_kb, sizeof(_kb), __VA_ARGS__);              \
+		klog(_kb);                                            \
+		fputs(_kb, stderr);                                   \
+	} while (0)
+
 #define SEL_GEM_NEW     0x42
 #define SEL_GEM_INFO    0x43
 #define SEL_GEM_SUBMIT  0x46
@@ -131,6 +164,9 @@ main(void)
 	struct sweet_gpu_info info;
 	size_t len;
 	int rc = 1;
+
+	g_gpufd = open("/dev/sweetgpu", O_RDWR);
+	printf("GPU IOKIT: start (devfd %d)\n", g_gpufd);
 
 	CFMutableDictionaryRef match = IOServiceMatching("SweetAdreno630");
 	if (match == NULL) {
@@ -247,5 +283,9 @@ main(void)
 	}
 
 	IOServiceClose(conn);
+	printf("GPU IOKIT: done rc %d\n", rc);
+	if (g_gpufd >= 0) {
+		close(g_gpufd);
+	}
 	return rc;
 }
