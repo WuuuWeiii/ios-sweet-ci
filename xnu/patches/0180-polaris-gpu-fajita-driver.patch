@@ -2,7 +2,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_gpu.c
-@@ -0,0 +1,3468 @@
+@@ -0,0 +1,3460 @@
 +/*
 + * Adreno 630 GPU driver for SDM845, from edi194/ios-fajita (OnePlus 6T),
 + * ported to the Xiaomi Mi MIX 2S (polaris, same SoC and GPU).
@@ -2898,10 +2898,6 @@ new file mode 100644
 +	gpu_probe_wr("gmu cm3 cfg", gmu, GPU_GMU_CM3_CFG, 0x4052);
 +
 +	/* out of reset: the one place a flush is worth its risk */
-+	{
-+		extern void sweet_log_panic_flush(void);
-+		sweet_log_panic_flush();
-+	}
 +	gpu_probe_wr("gmu fw_init", gmu, GPU_GMU_FW_INIT, 0);
 +	gpu_probe_wr("gmu wfi config", gmu, GPU_GMU_WFI_CONFIG, 0);
 +	gpu_probe_wr("gmu sysreset", gmu, GPU_GMU_SYSRESET, 1);
@@ -2921,10 +2917,6 @@ new file mode 100644
 +	/* The log lives at GPU address 0x60300000 and has no kernel mapping until the
 +	 * SMMU stage maps it: reading it here is what panicked console53. */
 +	printf("SWEET GPU: stage 3d done\n");
-+	{
-+		extern void sweet_log_panic_flush(void);
-+		sweet_log_panic_flush();
-+	}
 +	if (level < 9) {
 +		return;
 +	}
