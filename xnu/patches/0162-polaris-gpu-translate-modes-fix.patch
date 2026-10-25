@@ -1,0 +1,12 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -544,7 +544,7 @@
+ 	if (mode != 0) {
+ 		vm_offset_t smmu = ml_io_map(SMMU_BASE, SMMU_SIZE);
+ 		struct pgsm_tables tables = {0, 0, 0, 0, 0, 0};
+-		bool pass = (mode != 3);
++		bool pass = !(mode == 3 || mode >= 10);
+ 		if (smmu == 0 || !pgsm_setup(hfi_pa, HFI_BLOB_SIZE, &tables, smmu, pass, mode)) {
+ 			printf("POLARIS GPUM2b: SMMU setup failed; not starting HFI\n");
+ 			return;
