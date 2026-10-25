@@ -3475,9 +3475,10 @@ new file mode 100644
 diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -1,5 +1,6 @@
- bsd/dev/polaris_gpu.c			standard
- bsd/dev/polaris_gpu_probe.c		standard
+@@ -120,6 +120,7 @@
+ bsd/dev/polaris_gpu_gmu.c		standard
+ bsd/dev/polaris_gpu_cm3.c		standard
+ bsd/dev/polaris_gpu_smmu.c		standard
 +bsd/dev/sweet_gpu.c			standard
  bsd/dev/mem.c				standard
  bsd/dev/munge.c 			optional config_requires_u32_munging
@@ -3485,16 +3486,19 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -1,10 +1,12 @@
+@@ -57,6 +57,7 @@
+ extern void polaris_gpu_diag(void);
  extern void polaris_gpu_init(void);
  extern void polaris_gpu_probe(void);
 +extern void sweet_gpu_probe(void);
- extern void sweet_usb_probe(void);
- 
- #define REG_CAP
+ extern void polaris_gpu_power(void);
+ extern void polaris_gpu_gmu(void);
+ extern void polaris_gpu_cm3(void);
+@@ -700,6 +701,7 @@
+ 	polaris_gpu_diag();
  	polaris_gpu_init();
  	polaris_gpu_probe();
-+	sweet_gpu_probe();
- 	sweet_usb_probe();
- 	return 0;
- }
++	sweet_gpu_probe();	/* polaris GPU (fajita driver) */
+ 	polaris_gpu_power();
+ 	polaris_gpu_gmu();
+ 	polaris_gpu_smmu();
