@@ -53,11 +53,16 @@ jobs:
           cp xnu/patches/*.patch xnu/patches/*.sh dxb/patches/
           # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64
           sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
-          # let ccache wrap the Xcode compilers (build.sh sets CC/CXX itself)
+          # ccache as a single-file wrapper: xcodebuild rejects CC values with arguments
           CCACHE_BIN="$(command -v ccache || echo /opt/homebrew/bin/ccache)"
-          sed -i '' "s|export CC=\"\$(xcrun -find clang)\"|export CC=\"${CCACHE_BIN} \$(xcrun -find clang)\"|" dxb/build.sh
-          sed -i '' "s|export CXX=\"\$(xcrun -find clang++)\"|export CXX=\"${CCACHE_BIN} \$(xcrun -find clang++)\"|" dxb/build.sh
-          grep -n 'export CC=' dxb/build.sh
+          CLANG_BIN="$(xcrun -find clang)"
+          CLANGXX_BIN="$(xcrun -find clang++)"
+          printf '#!/bin/bash\nexec "%s" "%s" "$@"\n' "$CCACHE_BIN" "$CLANG_BIN" > /tmp/ccache-clang
+          printf '#!/bin/bash\nexec "%s" "%s" "$@"\n' "$CCACHE_BIN" "$CLANGXX_BIN" > /tmp/ccache-clang++
+          chmod +x /tmp/ccache-clang /tmp/ccache-clang++
+          sed -i '' "s|export CC=.*|export CC=\"/tmp/ccache-clang\"|" dxb/build.sh
+          sed -i '' "s|export CXX=.*|export CXX=\"/tmp/ccache-clang++\"|" dxb/build.sh
+          grep -n 'export CC=\|export CXX=' dxb/build.sh
           grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh
           ls dxb/patches
 
