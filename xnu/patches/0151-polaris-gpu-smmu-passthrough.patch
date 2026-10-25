@@ -1,0 +1,34 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -191,7 +191,9 @@
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_TCR2, 1u);                /* PASize 36 bits */
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_MAIR0, 0x44u);            /* attr0 normal non-cacheable */
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_MAIR1, 0u);
+-	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, 0x67u);            /* CFIE CFRE AFE TRE M */
++	/* Pass-through (TopazGpuW G1): with M=0 the SMMU leaves addresses
++	 * unchanged, so the GMU reaches the HFI memory by physical address. */
++	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, 0xE0u);            /* M=0 pass-through */
+ 	/* The GMU's AHB master id is not documented on this phone: route the
+ 	 * three plausible streams (5 gmu_kernel, 4 gmu_user, 0 GPU) to CB0. */
+ 	pgsm_wr(smmu, SMMU_SMR(0), 0x80000005u);                  /* SMR0: valid, SID 5 */
+@@ -338,7 +340,7 @@
+ 	for (uint32_t i = 0; i < HFI_QUEUE_MAX; i++) {
+ 		uint32_t *h = w + 6 + i * 12;
+ 		h[0] = 1;                              /* status active */
+-		h[1] = (uint32_t)(HFI_GPU_VA + HFI_QUEUE_OFF(i)); /* queue address (GPU VA) */
++		h[1] = (uint32_t)(hfi_pa + HFI_QUEUE_OFF(i));     /* queue address (phys, pass-through) */
+ 		h[2] = (queues[i].id & 0xffu) | ((queues[i].prio & 0xffu) << 8);
+ 		h[3] = HFI_QUEUE_SIZE >> 2;            /* queue size in dwords */
+ 		h[4] = 0;                              /* var-size messages */
+@@ -428,8 +430,8 @@
+ 			printf("POLARIS GPUM2b: SMMU setup failed; not starting HFI\n");
+ 			return;
+ 		}
+-		cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)HFI_GPU_VA);
+-		printf("POLARIS GPUM2b: HFI qtable now 0x%08x (GPU VA)\n",
++		cm3_wr(gmu, cm3_reg(GMU_HFI_QTBL_ADDR), (uint32_t)hfi_pa);
++		printf("POLARIS GPUM2b: HFI qtable now 0x%08x (phys, pass-through)\n",
+ 		    cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
+ 		sweet_dbg_dump_now();
+ 	}
