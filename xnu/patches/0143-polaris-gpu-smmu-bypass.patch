@@ -1,0 +1,44 @@
+diff --git a/bsd/dev/polaris_gpu_smmu.c b/bsd/dev/polaris_gpu_smmu.c
+--- a/bsd/dev/polaris_gpu_smmu.c
++++ b/bsd/dev/polaris_gpu_smmu.c
+@@ -14,6 +14,7 @@
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern bool polaris_touch_i2c_board(void);
++extern void sweet_dbg_dump_now(void);
+ 
+ #define GCC_PA              0x00100000ULL
+ #define GCC_SIZE            0x00090000ULL
+@@ -145,14 +146,23 @@
+ 		    sm_rd(smmu, at + SMMU_CB_FAR));
+ 	}
+ 
+-	/* The micro-MMU block at 0x6000 (dt: qcom,micro-mmu-control) holds the
+-	 * GMU's own contexts; CB4 = GMU user, CB5 = GMU kernel (dtsi). */
+-	printf("POLARIS GPUSMMU: micrommu 6000: sctlr=%08x ttbr0=%08x tcr=%08x fsr=%08x\n",
+-	    sm_rd(smmu, 0x6000u + SMMU_CB_SCTLR), sm_rd(smmu, 0x6000u + SMMU_CB_TTBR0),
+-	    sm_rd(smmu, 0x6000u + SMMU_CB_TCR), sm_rd(smmu, 0x6000u + SMMU_CB_FSR));
+-	printf("POLARIS GPUSMMU: micrommu 7000: sctlr=%08x ttbr0=%08x tcr=%08x fsr=%08x\n",
+-	    sm_rd(smmu, 0x7000u + SMMU_CB_SCTLR), sm_rd(smmu, 0x7000u + SMMU_CB_TTBR0),
+-	    sm_rd(smmu, 0x7000u + SMMU_CB_TCR), sm_rd(smmu, 0x7000u + SMMU_CB_FSR));
+-	printf("POLARIS GPUSMMU: read-only probe done; nothing written to the SMMU\n");
++	/* Note: offset 0x6000 (dt qcom,micro-mmu-control) is not readable on this
++	 * phone: touching it resets the SoC.  Never probe it again. */
++
++	/* Optional: put the GMU's stream (5, dt gmu_kernel iommus) into bypass so
++	 * the GMU's HFI queue accesses use physical addresses.  SMR[0] matches
++	 * exactly stream 5; S2CR[0] = type 1 (bypass), context 0xff. */
++	int bypass = 0;
++	(void)PE_parse_boot_argn("polarisgpusmmubypass", &bypass, sizeof(bypass));
++	if (bypass == 1) {
++		sweet_dbg_dump_now();
++		sm_wr(smmu, SMMU_SMR(0), 0x80000005u);
++		sm_wr(smmu, SMMU_S2CR(0), 0x000100ffu);
++		__asm__ volatile ("dsb sy" ::: "memory");
++		printf("POLARIS GPUSMMU: bypass set: smr0=%08x s2cr0=%08x\n",
++		    sm_rd(smmu, SMMU_SMR(0)), sm_rd(smmu, SMMU_S2CR(0)));
++		sweet_dbg_dump_now();
++	}
++	printf("POLARIS GPUSMMU: probe done\n");
+ }
+ #endif
