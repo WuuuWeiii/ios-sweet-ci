@@ -1,0 +1,28 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -47,6 +47,8 @@
+ #define GMU_CM3_FW_INIT     0x1F81Cu
+ #define GMU_SYS_BUS_CONFIG  0x1F40Fu
+ #define GMU_PWR_COL_IFPC    0x1F8C0u
++#define GMU_PWR_COL_IFPC_HYST 0x1F8C1u
++#define GMU_RPMH_CTRL       0x1F8E8u
+ #define GMU_HFI_CTRL_STATUS 0x1F980u
+ #define GMU_HFI_SFR_ADDR    0x1F982u
+ #define GMU_HFI_QTBL_INFO   0x1F984u
+@@ -486,6 +488,15 @@
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_SFR_ADDR), 0x06030100u);      /* A630v2 chipid */
+ 	cm3_wr(gmu, cm3_reg(GMU_SYS_BUS_CONFIG), 0x1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_IFPC), 0x9C40400u);
++	/* Vendor a6xx_gmu_power_config: IFPC idle hysteresis/enable and, for
++	 * chips with the ADRENO_RPMH feature (a630v2), the RPMh client. */
++	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_IFPC_HYST), 0x000A1680u);
++	cm3_wr(gmu, cm3_reg(GMU_PWR_COL_IFPC),
++	    cm3_rd(gmu, cm3_reg(GMU_PWR_COL_IFPC)) | 3u);
++	cm3_wr(gmu, cm3_reg(GMU_RPMH_CTRL),
++	    cm3_rd(gmu, cm3_reg(GMU_RPMH_CTRL)) | 0xF11u);      /* RPMH_ENABLE_MASK */
++	printf("POLARIS GPUM2b: rpmh_ctrl=%08x ifpc_ctrl=%08x\n",
++	    cm3_rd(gmu, cm3_reg(GMU_RPMH_CTRL)), cm3_rd(gmu, cm3_reg(GMU_PWR_COL_IFPC)));
+ 
+ 	/* M3 config from mainline (snapshots toggle the NMI bit; keep __main) */
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_CFG), 0x4052u);
