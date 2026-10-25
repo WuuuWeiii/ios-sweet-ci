@@ -15,6 +15,18 @@ if [ ! -d mesa ]; then
   tar xJf "$TAG.tar.xz"
   mv "$TAG" mesa
   ( cd mesa && patch -p1 --batch --forward < "$HERE/bergamota-mesa-25.0.7.patch" )
+  python3 - "$WORK/mesa/meson.build" <<'PY'
+# The msm winsys (libfreedreno_drm) lives under `if system_has_kms_drm`; the msm
+# requests go through our libdrm stand-in, whose headers are real libdrm ones.
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "system_has_kms_drm = ['openbsd', 'netbsd', 'freebsd', 'gnu/kfreebsd', 'dragonfly', 'linux', 'sunos', 'android', 'managarm'].contains(host_machine.system())"
+new = "system_has_kms_drm = ['openbsd', 'netbsd', 'freebsd', 'gnu/kfreebsd', 'dragonfly', 'linux', 'sunos', 'android', 'managarm', 'darwin'].contains(host_machine.system())"
+assert old in s, 'kms_drm line not found'
+open(p, 'w').write(s.replace(old, new, 1))
+print('mesh.build: darwin treated as KMS/DRM so libfreedreno_drm is built')
+PY
 fi
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 if [ ! -d libdrm ]; then
