@@ -1,0 +1,83 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -14,9 +14,13 @@
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
+ #include <kern/clock.h>
++#include <vm/vm_kern.h>
++#include <vm/pmap.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern bool polaris_touch_i2c_board(void);
++extern void sweet_dbg_dump_now(void);
++extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+ 
+ #define GCC_PA              0x00100000ULL
+ #define GCC_SIZE            0x00090000ULL
+@@ -113,15 +117,30 @@
+ 	}
+ 
+ 	uint64_t fw_pa = 0, fw_size = 0, fw_va = 0;
+-	uint64_t hfi_pa = 0, hfi_size = 0, hfi_va = 0;
++	uint64_t hfi_pa = 0, hfi_va = 0;
+ 	if (!cm3_blob("GPU-GMU", GMU_FW_WORDS * 4u, &fw_pa, &fw_size, &fw_va)) {
+ 		printf("POLARIS GPUM2b: GPU-GMU blob missing/wrong size\n");
+ 		return;
+ 	}
+-	if (!cm3_blob("GPU-HFI", HFI_BLOB_SIZE, &hfi_pa, &hfi_size, &hfi_va)) {
+-		printf("POLARIS GPUM2b: GPU-HFI blob missing/wrong size\n");
+-		return;
+-	}
++
++	/* The GMU's HFI queue table address is a 32-bit bus address: allocate the
++	 * 16 KiB page-aligned table below 4 GiB (max_pnum = 0x100000 4 KiB pages). */
++	vm_offset_t hfi_va_off = 0;
++	if (kmem_alloc_contig(kernel_map, &hfi_va_off, HFI_BLOB_SIZE, PAGE_MASK,
++	    (ppnum_t)0x100000, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS || hfi_va_off == 0) {
++		printf("POLARIS GPUM2b: no HFI memory below 4 GiB\n");
++		return;
++	}
++	ppnum_t hfi_pn = pmap_find_phys(kernel_pmap, (addr64_t)hfi_va_off);
++	if (hfi_pn == 0) {
++		printf("POLARIS GPUM2b: HFI memory has no physical page\n");
++		return;
++	}
++	hfi_pa = ((uint64_t)hfi_pn) << 12;
++	hfi_va = hfi_va_off;
++	printf("POLARIS GPUM2b: HFI table at low phys 0x%llx (kv 0x%llx)\n",
++	    (unsigned long long)hfi_pa, (unsigned long long)hfi_va);
+ 	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
+ 	vm_offset_t gpucc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
+ 	vm_offset_t gmu = ml_io_map(GMU_PA, GMU_SIZE);
+@@ -209,6 +228,10 @@
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_SYSRESET)), cm3_rd(gmu, cm3_reg(GMU_CM3_FW_INIT)),
+ 	    cm3_rd(gmu, cm3_reg(GMU_CM3_BOOT_CONFIG)), cm3_rd(gmu, cm3_reg(GMU_HFI_QTBL_ADDR)));
+ 
++	/* Persist the console ring now: if the GMU faults the whole SoC may be
++	 * reset by the hypervisor before the log thread flushes anything. */
++	sweet_dbg_dump_now();
++
+ 	/* Reset the CM3, then let it run. */
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_SYSRESET), 1u);
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -831,6 +831,15 @@
+ 	}
+ }
+ 
++/* Persist the console ring to the oops partition on demand (used by the
++ * GPU bring-up before taking risks that may reset the SoC). */
++void
++sweet_dbg_dump_now(void)
++{
++	sweet_dbg_dump();
++	(void)ufs_sync_cache();
++}
++
+ static void
+ sweet_psci_system_reset(void)
+ {
