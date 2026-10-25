@@ -16,11 +16,12 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
  #define SMMU_CB_TLBIALL      0x618u
  #define SMMU_CB_TLBSYNC      0x7f0u
  #define SMMU_CB_TLBSTATUS    0x7f4u
-@@ -156,9 +158,16 @@
+@@ -156,9 +158,17 @@
  #define PTE_AP_UNPRIV        (1ULL << 6)
  #define PTE_SH_OUTER         (2ULL << 8)
  #define PTE_AF               (1ULL << 10)
 -#define PTE_PAGE             (PTE_VALID | PTE_TABLE | PTE_AP_UNPRIV | PTE_SH_OUTER | PTE_AF)
++#define PTE_NOT_GLOBAL       (1ULL << 11)
 +#define PTE_GMU              (PTE_SH_OUTER | PTE_AF | PTE_NOT_GLOBAL)
 +#define PTE_PAGE             (PTE_VALID | PTE_TABLE | PTE_GMU)
  #define PTE_NS               (1ULL << 5)
@@ -35,7 +36,7 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
  
  struct pgsm_tables {
  	uint64_t l1_pa, l2_pa, l3_pa;
-@@ -189,6 +198,8 @@
+@@ -189,6 +199,8 @@
  {
  	vm_offset_t block = 0;
  	ppnum_t pn;
@@ -44,7 +45,7 @@ diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
  
  	if (kmem_alloc_contig(kernel_map, &block, 3 * PAGE_SIZE, PAGE_MASK,
  	    (ppnum_t)0x100000, 0, KMA_DATA | KMA_ZERO | KMA_PERMANENT,
-@@ -214,64 +225,68 @@
+@@ -214,64 +226,68 @@
  	uint32_t i1 = (uint32_t)(HFI_GPU_VA >> 30) & 511u;
  	uint32_t i2 = (uint32_t)((HFI_GPU_VA >> 21) & 511u);
  	uint32_t i3 = (uint32_t)((HFI_GPU_VA >> 12) & 511u);
