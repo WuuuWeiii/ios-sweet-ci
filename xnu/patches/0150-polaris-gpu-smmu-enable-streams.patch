@@ -1,0 +1,69 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -53,6 +53,7 @@
+ #define GMU_HFI_QTBL_ADDR   0x1F985u
+ #define GMU_HFI_CTRL_INIT   0x1F986u
+ #define GMU_GMU2HOST_MASK   0x1F993u
++#define GMU_GMU2HOST_INFO   0x1F992u
+ #define GMU_GENERAL_7       0x1F9CCu
+ #define GMU_AHB_FENCE_RANGE0 0x23B11u
+ #define GMU_GX_SPTPRAC_POWER 0x1A881u
+@@ -191,8 +192,14 @@
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_MAIR0, 0x44u);            /* attr0 normal non-cacheable */
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_MAIR1, 0u);
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_SCTLR, 0x67u);            /* CFIE CFRE AFE TRE M */
++	/* The GMU's AHB master id is not documented on this phone: route the
++	 * three plausible streams (5 gmu_kernel, 4 gmu_user, 0 GPU) to CB0. */
+ 	pgsm_wr(smmu, SMMU_SMR(0), 0x80000005u);                  /* SMR0: valid, SID 5 */
+ 	pgsm_wr(smmu, SMMU_S2CR(0), 0x00000000u);                 /* S2CR0: translate -> CB0 */
++	pgsm_wr(smmu, SMMU_SMR(1), 0x80000004u);                  /* SMR1: valid, SID 4 */
++	pgsm_wr(smmu, SMMU_S2CR(1), 0x00000000u);
++	pgsm_wr(smmu, SMMU_SMR(2), 0x80000000u);                  /* SMR2: valid, SID 0 */
++	pgsm_wr(smmu, SMMU_S2CR(2), 0x00000000u);
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_TLBIALL, 0u);
+ 	pgsm_wr(smmu, 0x8000u + SMMU_CB_TLBSYNC, 0u);
+ 	for (int i = 0; i < 100; i++) {
+@@ -201,6 +208,10 @@
+ 		}
+ 		delay(1);
+ 	}
++	/* Global SMMU enable: SCR0 bit 0; keep the rest of the register. */
++	uint32_t scr0 = pgsm_rd(smmu, 0x0u);
++	pgsm_wr(smmu, 0x0u, (scr0 | 1u) & ~2u);
++	printf("POLARIS GPUM4: SCR0 %08x -> %08x\n", scr0, pgsm_rd(smmu, 0x0u));
+ 	printf("POLARIS GPUM4: SMMU ttbr0=%08x%08x cb0 sctlr=%08x cbar0=%08x cba2r0=%08x s2cr0=%08x smr0=%08x\n",
+ 	    pgsm_rd(smmu, 0x8000u + SMMU_CB_TTBR0 + 4u), pgsm_rd(smmu, 0x8000u + SMMU_CB_TTBR0),
+ 	    pgsm_rd(smmu, 0x8000u + SMMU_CB_SCTLR), pgsm_rd(smmu, SMMU_CBAR(0)),
+@@ -427,17 +438,28 @@
+ 	uint32_t mask = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_MASK));
+ 	cm3_wr(gmu, cm3_reg(GMU_GMU2HOST_MASK), mask & ~1u);
+ 	cm3_wr(gmu, cm3_reg(GMU_HFI_CTRL_INIT), 1u);
+-	uint32_t hfi = 0;
++	uint32_t hfi = 0, intr = 0;
+ 	bool hfi_ok = false;
+-	for (int i = 0; i < 500; i++) {
++	for (int i = 0; i < 2000; i++) {
+ 		hfi = cm3_rd(gmu, cm3_reg(GMU_HFI_CTRL_STATUS));
++		intr = cm3_rd(gmu, cm3_reg(GMU_GMU2HOST_INFO));
+ 		if (hfi & 1u) {
+ 			hfi_ok = true;
+ 			break;
+ 		}
+ 		delay(1);
+ 	}
+-	printf("POLARIS GPUM2b: HFI ctrl status %08x (%s)\n", hfi, hfi_ok ? "queues up" : "not ready");
++	printf("POLARIS GPUM2b: HFI ctrl status %08x intr %08x (%s)\n",
++	    hfi, intr, hfi_ok ? "queues up" : "not ready");
++	{
++		vm_offset_t smmu = ml_io_map(SMMU_BASE, SMMU_SIZE);
++		if (smmu != 0) {
++			printf("POLARIS GPUM2b: SMMU gfsr=%08x cb0 fsr=%08x far=%08x%08x fsynr0=%08x\n",
++			    pgsm_rd(smmu, 0x48u), pgsm_rd(smmu, 0x8000u + SMMU_CB_FSR),
++			    pgsm_rd(smmu, 0x8000u + SMMU_CB_FAR + 4u), pgsm_rd(smmu, 0x8000u + SMMU_CB_FAR),
++			    pgsm_rd(smmu, 0x8000u + SMMU_CB_FSYNR0));
++		}
++	}
+ 	sweet_dbg_dump_now();
+ 	printf("POLARIS GPUM2b: done: CM3 runs=%s HFI=%s; GX/CP still untouched\n",
+ 	    booted ? "yes" : "no", hfi_ok ? "yes" : "no");
