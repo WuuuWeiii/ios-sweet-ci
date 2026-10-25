@@ -1,0 +1,30 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -344,9 +344,13 @@
+ 		h[2] = (queues[i].id & 0xffu) | ((queues[i].prio & 0xffu) << 8);
+ 		h[3] = HFI_QUEUE_SIZE >> 2;            /* queue size in dwords */
+ 		h[4] = 0;                              /* var-size messages */
+-		h[7] = 1;                              /* rx_wm */
+-		h[8] = 1;                              /* tx_wm */
+-		h[9] = 1;                              /* rx_req */
++		h[5] = 0;                              /* drop_cnt */
++		h[6] = 1;                              /* rx_wm */
++		h[7] = 1;                              /* tx_wm */
++		h[8] = 1;                              /* rx_req */
++		h[9] = 0;                              /* tx_req */
++		h[10] = 0;                             /* read_index */
++		h[11] = 0;                             /* write_index */
+ 	}
+ 	/* The GMU reads the table through the physical address: clean the CPU
+ 	 * cache to the point of coherency first. */
+@@ -354,6 +358,9 @@
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ 	printf("POLARIS GPUM2b: HFI table at phys 0x%llx (16 KiB), qsize=%u (flushed)\n",
+ 	    (unsigned long long)hfi_pa, HFI_QUEUE_SIZE);
++	printf("POLARIS GPUM2b: table words: hdr %08x %08x %08x %08x %08x %08x q0 %08x %08x %08x %08x %08x %08x\n",
++	    w[0], w[1], w[2], w[3], w[4], w[5],
++	    w[6], w[7], w[8], w[9], w[10], w[11]);
+ 
+ 	/* Program the GMU before releasing reset. */
+ 	cm3_wr(gmu, cm3_reg(GMU_CM3_FW_INIT), 0);
