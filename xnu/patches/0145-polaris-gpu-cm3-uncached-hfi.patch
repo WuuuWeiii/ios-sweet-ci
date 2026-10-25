@@ -1,0 +1,20 @@
+diff --git a/bsd/dev/polaris_gpu_cm3.c b/bsd/dev/polaris_gpu_cm3.c
+--- a/bsd/dev/polaris_gpu_cm3.c
++++ b/bsd/dev/polaris_gpu_cm3.c
+@@ -186,7 +186,15 @@
+ 
+ 	/* Build the HFI queue table in the GPU-HFI blob (physical address is
+ 	 * what the firmware receives as its queue-table address). */
+-	uint8_t *t = (uint8_t *)hfi_va;
++	/* The table must be visible to the GMU through the physical address: a
++	 * cached kernel mapping could still hold the zeroes in the CPU cache.
++	 * Use an uncached device mapping for the table writes. */
++	vm_offset_t hfi_io = ml_io_map((vm_offset_t)hfi_pa, HFI_BLOB_SIZE);
++	if (hfi_io == 0) {
++		printf("POLARIS GPUM2b: cannot map the HFI table uncached\n");
++		return;
++	}
++	uint8_t *t = (uint8_t *)hfi_io;
+ 	memset(t, 0, (size_t)HFI_BLOB_SIZE);
+ 	uint32_t *w = (uint32_t *)t;
+ 	struct {
