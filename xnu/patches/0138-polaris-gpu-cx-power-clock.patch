@@ -84,144 +84,144 @@ new file mode 100644
 +static uint32_t
 +pgw_rd(vm_offset_t base, uint32_t off)
 +{
-+\tuint32_t v = *(volatile uint32_t *)(base + off);
-+\t__asm__ volatile ("dmb oshld" ::: "memory");
-+\treturn v;
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
 +}
 +
 +static void
 +pgw_wr(vm_offset_t base, uint32_t off, uint32_t v)
 +{
-+\t*(volatile uint32_t *)(base + off) = v;
-+\t__asm__ volatile ("dsb sy; dmb oshld" ::: "memory");
++	*(volatile uint32_t *)(base + off) = v;
++	__asm__ volatile ("dsb sy; dmb oshld" ::: "memory");
 +}
 +
 +static bool
 +pgw_dump(vm_offset_t gcc, vm_offset_t gpucc, const char *where)
 +{
-+\tprintf("POLARIS GPUPWR [%s]: gcc ahb=%08x memnoc=%08x snoc=%08x ddr=%08x vote=%08x\\n", where,
-+\t    pgw_rd(gcc, GCC_GPU_CFG_AHB_CBCR), pgw_rd(gcc, GCC_GPU_MEMNOC_CBCR),
-+\t    pgw_rd(gcc, GCC_GPU_SNOC_CBCR), pgw_rd(gcc, GCC_DDRSS_GPU_AXI_CBCR),
-+\t    pgw_rd(gcc, GCC_GPU_GPLL0_VOTE));
-+\tprintf("POLARIS GPUPWR [%s]: cx_gdscr=%08x cx_hw=%08x gx_gdscr=%08x gx_sw=%08x pll1=%08x\\n", where,
-+\t    pgw_rd(gpucc, GPUCC_CX_GDSCR), pgw_rd(gpucc, GPUCC_CX_HW_CTRL),
-+\t    pgw_rd(gpucc, GPUCC_GX_GDSCR), pgw_rd(gpucc, GPUCC_GX_SW_RESET),
-+\t    pgw_rd(gpucc, GPUCC_PLL1_MODE));
-+\tprintf("POLARIS GPUPWR [%s]: cbcr ahb=%08x cx_gmu=%08x cxo=%08x gx_gmu=%08x rcgr=%08x src=%08x gx_misc=%08x\\n",
-+\t    where, pgw_rd(gpucc, GPUCC_AHB_CBCR), pgw_rd(gpucc, GPUCC_CX_GMU_CBCR),
-+\t    pgw_rd(gpucc, GPUCC_CXO_CBCR), pgw_rd(gpucc, GPUCC_GX_GMU_CBCR),
-+\t    pgw_rd(gpucc, GPUCC_GMU_RCGR), pgw_rd(gpucc, GPUCC_GMU_RCGR + 4),
-+\t    pgw_rd(gpucc, GPUCC_GX_DOMAIN_MISC));
-+\treturn true;
++	printf("POLARIS GPUPWR [%s]: gcc ahb=%08x memnoc=%08x snoc=%08x ddr=%08x vote=%08x\\n", where,
++	    pgw_rd(gcc, GCC_GPU_CFG_AHB_CBCR), pgw_rd(gcc, GCC_GPU_MEMNOC_CBCR),
++	    pgw_rd(gcc, GCC_GPU_SNOC_CBCR), pgw_rd(gcc, GCC_DDRSS_GPU_AXI_CBCR),
++	    pgw_rd(gcc, GCC_GPU_GPLL0_VOTE));
++	printf("POLARIS GPUPWR [%s]: cx_gdscr=%08x cx_hw=%08x gx_gdscr=%08x gx_sw=%08x pll1=%08x\\n", where,
++	    pgw_rd(gpucc, GPUCC_CX_GDSCR), pgw_rd(gpucc, GPUCC_CX_HW_CTRL),
++	    pgw_rd(gpucc, GPUCC_GX_GDSCR), pgw_rd(gpucc, GPUCC_GX_SW_RESET),
++	    pgw_rd(gpucc, GPUCC_PLL1_MODE));
++	printf("POLARIS GPUPWR [%s]: cbcr ahb=%08x cx_gmu=%08x cxo=%08x gx_gmu=%08x rcgr=%08x src=%08x gx_misc=%08x\\n",
++	    where, pgw_rd(gpucc, GPUCC_AHB_CBCR), pgw_rd(gpucc, GPUCC_CX_GMU_CBCR),
++	    pgw_rd(gpucc, GPUCC_CXO_CBCR), pgw_rd(gpucc, GPUCC_GX_GMU_CBCR),
++	    pgw_rd(gpucc, GPUCC_GMU_RCGR), pgw_rd(gpucc, GPUCC_GMU_RCGR + 4),
++	    pgw_rd(gpucc, GPUCC_GX_DOMAIN_MISC));
++	return true;
 +}
 +
 +static bool
 +pgw_clock_on(vm_offset_t base, const char *name, uint32_t off, bool must)
 +{
-+\tuint32_t v = pgw_rd(base, off);
-+\tif ((v & CBCR_OFF) == 0) {
-+\t\treturn true;
-+\t}
-+\tpgw_wr(base, off, v | CBCR_ENABLE);
-+\tfor (int i = 0; i < 200; i++) {
-+\t\tif ((pgw_rd(base, off) & CBCR_OFF) == 0) {
-+\t\t\tprintf("POLARIS GPUPWR: %s on (%08x)\\n", name, pgw_rd(base, off));
-+\t\t\treturn true;
-+\t\t}
-+\t\tdelay(10);
-+\t}
-+\tprintf("POLARIS GPUPWR: %s stays off (%08x)%s\\n", name, pgw_rd(base, off),
-+\t    must ? "" : "; status not reliable, continuing");
-+\treturn !must;
++	uint32_t v = pgw_rd(base, off);
++	if ((v & CBCR_OFF) == 0) {
++		return true;
++	}
++	pgw_wr(base, off, v | CBCR_ENABLE);
++	for (int i = 0; i < 200; i++) {
++		if ((pgw_rd(base, off) & CBCR_OFF) == 0) {
++			printf("POLARIS GPUPWR: %s on (%08x)\\n", name, pgw_rd(base, off));
++			return true;
++		}
++		delay(10);
++	}
++	printf("POLARIS GPUPWR: %s stays off (%08x)%s\\n", name, pgw_rd(base, off),
++	    must ? "" : "; status not reliable, continuing");
++	return !must;
 +}
 +
 +static bool
 +pgw_clock_source(vm_offset_t gpucc, const char *name, uint32_t rcgr, uint32_t source)
 +{
-+\tuint32_t was = pgw_rd(gpucc, rcgr + 4);
-+\tif ((was & 0x371fu) == source) {
-+\t\treturn true;
-+\t}
-+\tpgw_wr(gpucc, rcgr + 4, (was & ~0x371fu) | source);
-+\tpgw_wr(gpucc, rcgr, pgw_rd(gpucc, rcgr) | (1u << 0));
-+\tfor (int i = 0; i < 200; i++) {
-+\t\tif ((pgw_rd(gpucc, rcgr) & (1u << 0)) == 0) {
-+\t\t\tprintf("POLARIS GPUPWR: %s source -> %03x (src reg %08x)\\n", name, source,
-+\t\t\t    pgw_rd(gpucc, rcgr + 4));
-+\t\t\treturn true;
-+\t\t}
-+\t\tdelay(10);
-+\t}
-+\tprintf("POLARIS GPUPWR: %s source does not take (%08x)\\n", name, pgw_rd(gpucc, rcgr));
-+\treturn false;
++	uint32_t was = pgw_rd(gpucc, rcgr + 4);
++	if ((was & 0x371fu) == source) {
++		return true;
++	}
++	pgw_wr(gpucc, rcgr + 4, (was & ~0x371fu) | source);
++	pgw_wr(gpucc, rcgr, pgw_rd(gpucc, rcgr) | (1u << 0));
++	for (int i = 0; i < 200; i++) {
++		if ((pgw_rd(gpucc, rcgr) & (1u << 0)) == 0) {
++			printf("POLARIS GPUPWR: %s source -> %03x (src reg %08x)\\n", name, source,
++			    pgw_rd(gpucc, rcgr + 4));
++			return true;
++		}
++		delay(10);
++	}
++	printf("POLARIS GPUPWR: %s source does not take (%08x)\\n", name, pgw_rd(gpucc, rcgr));
++	return false;
 +}
 +
 +void
 +polaris_gpu_power(void)
 +{
-+\tint optin = 0;
-+\t(void)PE_parse_boot_argn("polarisgpupwr", &optin, sizeof(optin));
-+\tif (optin != 1 || !polaris_touch_i2c_board()) {
-+\t\treturn;
-+\t}
++	int optin = 0;
++	(void)PE_parse_boot_argn("polarisgpupwr", &optin, sizeof(optin));
++	if (optin != 1 || !polaris_touch_i2c_board()) {
++		return;
++	}
 +
-+\tvm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
-+\tvm_offset_t gpucc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
-+\tif (gcc == 0 || gpucc == 0) {
-+\t\tprintf("POLARIS GPUPWR: map failed (gcc %p gpucc %p)\\n", (void *)gcc, (void *)gpucc);
-+\t\treturn;
-+\t}
++	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
++	vm_offset_t gpucc = ml_io_map(GPUCC_PA, GPUCC_SIZE);
++	if (gcc == 0 || gpucc == 0) {
++		printf("POLARIS GPUPWR: map failed (gcc %p gpucc %p)\\n", (void *)gcc, (void *)gpucc);
++		return;
++	}
 +
-+\tprintf("POLARIS GPUPWR: step 1: read state before anything\\n");
-+\tpgw_dump(gcc, gpucc, "before");
-+\tif ((pgw_rd(gcc, GCC_GPU_CFG_AHB_CBCR) & CBCR_OFF) != 0) {
-+\t\tprintf("POLARIS GPUPWR: gpu_cfg_ahb is off; GPUCC is unreachable, stopping\\n");
-+\t\treturn;
-+\t}
++	printf("POLARIS GPUPWR: step 1: read state before anything\\n");
++	pgw_dump(gcc, gpucc, "before");
++	if ((pgw_rd(gcc, GCC_GPU_CFG_AHB_CBCR) & CBCR_OFF) != 0) {
++		printf("POLARIS GPUPWR: gpu_cfg_ahb is off; GPUCC is unreachable, stopping\\n");
++		return;
++	}
 +
-+\tprintf("POLARIS GPUPWR: step 2: CX power on (clear gpu_cx_gdsc SW_COLLAPSE)\\n");
-+\tuint32_t gdscr = pgw_rd(gpucc, GPUCC_CX_GDSCR);
-+\tuint32_t hw = pgw_rd(gpucc, GPUCC_CX_HW_CTRL);
-+\tbool cx_on = ((gdscr | hw) & GDSC_POWER_ON) != 0;
-+\tif (!cx_on) {
-+\t\tif (gdscr & GDSC_HW_CONTROL) {
-+\t\t\tprintf("POLARIS GPUPWR: CX switch is under hardware control (%08x); stopping\\n", gdscr);
-+\t\t\treturn;
-+\t\t}
-+\t\tpgw_wr(gpucc, GPUCC_CX_GDSCR, gdscr & ~GDSC_SW_COLLAPSE);
-+\t\tfor (int i = 0; i < 500; i++) {
-+\t\t\tif (((pgw_rd(gpucc, GPUCC_CX_GDSCR) | pgw_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) != 0) {
-+\t\t\t\tcx_on = true;
-+\t\t\t\tbreak;
-+\t\t\t}
-+\t\t\tdelay(1);
-+\t\t}
-+\t}
-+\tif (!cx_on) {
-+\t\tprintf("POLARIS GPUPWR: CX did not come on (gdscr %08x hw %08x); stopping before clocks\\n",
-+\t\t    pgw_rd(gpucc, GPUCC_CX_GDSCR), pgw_rd(gpucc, GPUCC_CX_HW_CTRL));
-+\t\treturn;
-+\t}
-+\tprintf("POLARIS GPUPWR: CX is on (gdscr %08x hw %08x)\\n",
-+\t    pgw_rd(gpucc, GPUCC_CX_GDSCR), pgw_rd(gpucc, GPUCC_CX_HW_CTRL));
++	printf("POLARIS GPUPWR: step 2: CX power on (clear gpu_cx_gdsc SW_COLLAPSE)\\n");
++	uint32_t gdscr = pgw_rd(gpucc, GPUCC_CX_GDSCR);
++	uint32_t hw = pgw_rd(gpucc, GPUCC_CX_HW_CTRL);
++	bool cx_on = ((gdscr | hw) & GDSC_POWER_ON) != 0;
++	if (!cx_on) {
++		if (gdscr & GDSC_HW_CONTROL) {
++			printf("POLARIS GPUPWR: CX switch is under hardware control (%08x); stopping\\n", gdscr);
++			return;
++		}
++		pgw_wr(gpucc, GPUCC_CX_GDSCR, gdscr & ~GDSC_SW_COLLAPSE);
++		for (int i = 0; i < 500; i++) {
++			if (((pgw_rd(gpucc, GPUCC_CX_GDSCR) | pgw_rd(gpucc, GPUCC_CX_HW_CTRL)) & GDSC_POWER_ON) != 0) {
++				cx_on = true;
++				break;
++			}
++			delay(1);
++		}
++	}
++	if (!cx_on) {
++		printf("POLARIS GPUPWR: CX did not come on (gdscr %08x hw %08x); stopping before clocks\\n",
++		    pgw_rd(gpucc, GPUCC_CX_GDSCR), pgw_rd(gpucc, GPUCC_CX_HW_CTRL));
++		return;
++	}
++	printf("POLARIS GPUPWR: CX is on (gdscr %08x hw %08x)\\n",
++	    pgw_rd(gpucc, GPUCC_CX_GDSCR), pgw_rd(gpucc, GPUCC_CX_HW_CTRL));
 +
-+\tprintf("POLARIS GPUPWR: step 3: GCC GPU clocks (memnoc/snoc/ddr) + GPLL0 tap vote\\n");
-+\t(void)pgw_clock_on(gcc, "gpu_memnoc_gfx", GCC_GPU_MEMNOC_CBCR, false);
-+\t(void)pgw_clock_on(gcc, "gpu_snoc_dvm_gfx", GCC_GPU_SNOC_CBCR, true);
-+\t(void)pgw_clock_on(gcc, "ddrss_gpu_axi", GCC_DDRSS_GPU_AXI_CBCR, false);
-+\tpgw_wr(gcc, GCC_GPU_GPLL0_VOTE, pgw_rd(gcc, GCC_GPU_GPLL0_VOTE) | (1u << 15) | (1u << 16));
++	printf("POLARIS GPUPWR: step 3: GCC GPU clocks (memnoc/snoc/ddr) + GPLL0 tap vote\\n");
++	(void)pgw_clock_on(gcc, "gpu_memnoc_gfx", GCC_GPU_MEMNOC_CBCR, false);
++	(void)pgw_clock_on(gcc, "gpu_snoc_dvm_gfx", GCC_GPU_SNOC_CBCR, true);
++	(void)pgw_clock_on(gcc, "ddrss_gpu_axi", GCC_DDRSS_GPU_AXI_CBCR, false);
++	pgw_wr(gcc, GCC_GPU_GPLL0_VOTE, pgw_rd(gcc, GCC_GPU_GPLL0_VOTE) | (1u << 15) | (1u << 16));
 +
-+\tprintf("POLARIS GPUPWR: step 4: GPUCC clocks (CXO, CX GMU) and GMU clk src = GPLL0/1.5 (200 MHz)\\n");
-+\t(void)pgw_clock_source(gpucc, "gmu_clk_src", GPUCC_GMU_RCGR, (6u << 8) | 2u);
-+\tif (!pgw_clock_on(gpucc, "cxo", GPUCC_CXO_CBCR, true)) {
-+\t\treturn;
-+\t}
-+\tif (!pgw_clock_on(gpucc, "cx_gmu", GPUCC_CX_GMU_CBCR, true)) {
-+\t\treturn;
-+\t}
++	printf("POLARIS GPUPWR: step 4: GPUCC clocks (CXO, CX GMU) and GMU clk src = GPLL0/1.5 (200 MHz)\\n");
++	(void)pgw_clock_source(gpucc, "gmu_clk_src", GPUCC_GMU_RCGR, (6u << 8) | 2u);
++	if (!pgw_clock_on(gpucc, "cxo", GPUCC_CXO_CBCR, true)) {
++		return;
++	}
++	if (!pgw_clock_on(gpucc, "cx_gmu", GPUCC_CX_GMU_CBCR, true)) {
++		return;
++	}
 +
-+\tprintf("POLARIS GPUPWR: final state\\n");
-+\tpgw_dump(gcc, gpucc, "after");
-+\tprintf("POLARIS GPUPWR: M1 done (CX on, clocks requested); 3D core/GX untouched\\n");
++	printf("POLARIS GPUPWR: final state\\n");
++	pgw_dump(gcc, gpucc, "after");
++	printf("POLARIS GPUPWR: M1 done (CX on, clocks requested); 3D core/GX untouched\\n");
 +}
 +#endif
