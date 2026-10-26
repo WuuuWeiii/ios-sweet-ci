@@ -51,6 +51,42 @@ typedef struct _drmVersion {
 } drmVersion, *drmVersionPtr;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Kernel-log channel (patch 0184: /dev/sweetgpu ioctl 0x74). The iOS console is
+ * muted, so this is how the winsys reports what the GPU kernel says. */
+#include <sys/ioctl.h>
+#include <stdarg.h>
+struct sweet_gpu_log_k { char msg[1008]; };
+#define SWEET_GPU_IOCTL_LOG_K _IOWR('G', 0x74, struct sweet_gpu_log_k)
+static int g_klog_fd = -1;
+static pthread_mutex_t g_klog_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void
+klog_drm(const char *fmt, ...)
+{
+	char b[1000];
+	struct sweet_gpu_log_k l;
+	va_list ap;
+	int n;
+
+	if (g_klog_fd == -1) {
+		g_klog_fd = open("/dev/sweetgpu", O_WRONLY);
+	}
+	if (g_klog_fd < 0) {
+		return;
+	}
+	va_start(ap, fmt);
+	n = vsnprintf(b, sizeof(b), fmt, ap);
+	va_end(ap);
+	if (n <= 0) {
+		return;
+	}
+	memset(&l, 0, sizeof(l));
+	strncpy(l.msg, b, sizeof(l.msg) - 1);
+	pthread_mutex_lock(&g_klog_lock);
+	(void)ioctl(g_klog_fd, SWEET_GPU_IOCTL_LOG_K, &l);
+	pthread_mutex_unlock(&g_klog_lock);
+}
 static io_connect_t g_conn;
 static dev_t g_null_rdev;
 static int g_trace;
@@ -207,6 +243,7 @@ connect_once(void)
 		g_trace = getenv("SWEET_DRM_TRACE") != NULL;
 		bolog_open();
 		io_service_t svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(SWEET_GPU_SERVICE_NAME));
+		klog_drm("SWEETDRM: service %s -> %#x", SWEET_GPU_SERVICE_NAME, svc);
 		if (svc != IO_OBJECT_NULL) {
 			if (IOServiceOpen(svc, mach_task_self(), 0, &g_conn) != KERN_SUCCESS) {
 				g_conn = IO_OBJECT_NULL;
@@ -340,6 +377,41 @@ sweet_call(uint32_t sel, void *data, size_t size)
 		clock_gettime(CLOCK_MONOTONIC, &t0);
 	}
 	kern_return_t kr = IOConnectCallStructMethod(g_conn, sel, in, want, out, &outsz);
+	if (g_trace || 1) {
+		switch (sel) {
+		case SWEET_GPU_SEL_INFO: {
+			const struct sweet_gpu_info *o = (const void *)out;
+			klog_drm("SWEETDRM: INFO kr=%#x abi=%u.%u flags=%#x va=%#llx+%#llx",
+			    kr, o->abi_version, o->abi_minor, o->flags,
+			    (unsigned long long)o->va_start, (unsigned long long)o->va_size);
+			break;
+		}
+		case SWEET_GPU_SEL_GEM_NEW: {
+			const struct sweet_msm_gem_new *o = (const void *)out;
+			klog_drm("SWEETDRM: GEM_NEW kr=%#x handle=%u", kr, o->handle);
+			break;
+		}
+		case SWEET_GPU_SEL_GEM_INFO: {
+			const struct sweet_msm_gem_info *i = (const void *)in, *o = (const void *)out;
+			klog_drm("SWEETDRM: GEM_INFO op=%u kr=%#x value=%#llx", i->info, kr,
+			    (unsigned long long)o->value);
+			break;
+		}
+		case SWEET_GPU_SEL_GEM_SUBMIT: {
+			const struct sweet_msm_gem_submit *o = (const void *)out;
+			klog_drm("SWEETDRM: SUBMIT kr=%#x fence=%u outsz=%zu", kr, o->fence, outsz);
+			break;
+		}
+		case SWEET_GPU_SEL_WAIT_FENCE: {
+			const struct sweet_msm_wait_fence *i = (const void *)in;
+			klog_drm("SWEETDRM: WAIT fence=%u kr=%#x", i->fence, kr);
+			break;
+		}
+		default:
+			klog_drm("SWEETDRM: sel=%#x kr=%#x outsz=%zu", sel, kr, outsz);
+			break;
+		}
+	}
 	if (sel == SWEET_GPU_SEL_WAIT_FENCE && kr != KERN_SUCCESS) {
 		wait_failed((struct sweet_msm_wait_fence *)in, kr, &t0);
 	}
@@ -440,10 +512,13 @@ drmOpenWithType(const char *name, const char *busid, int type)
 {
 	(void)name; (void)busid; (void)type;
 	if (!connect_once()) {
+		klog_drm("SWEETDRM: open -> no service");
 		errno = ENODEV;
 		return -1;
 	}
-	return open("/dev/null", O_RDWR | O_CLOEXEC);
+	int f = open("/dev/null", O_RDWR | O_CLOEXEC);
+	klog_drm("SWEETDRM: open -> fd %d", f);
+	return f;
 }
 
 EXPORT int
@@ -502,6 +577,8 @@ sweet_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off)
 	}
 	kern_return_t kr = IOConnectMapMemory64(g_conn, (uint32_t)off, mach_task_self(), &a, &s,
 	    kIOMapAnywhere | kIOMapWriteCombineCache);
+	klog_drm("SWEETDRM: mmap handle=%u len=%zu kr=%#x addr=%#llx s=%#llx",
+	    (uint32_t)off, len, kr, (unsigned long long)a, (unsigned long long)s);
 	if (kr != KERN_SUCCESS || s < len) {
 		if (kr == KERN_SUCCESS) {
 			IOConnectUnmapMemory64(g_conn, (uint32_t)off, mach_task_self(), a);
