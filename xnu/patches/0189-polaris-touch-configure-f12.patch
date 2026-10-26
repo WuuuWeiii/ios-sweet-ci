@@ -1,0 +1,101 @@
+diff --git a/bsd/dev/polaris_touch_i2c.c b/bsd/dev/polaris_touch_i2c.c
+--- a/bsd/dev/polaris_touch_i2c.c
++++ b/bsd/dev/polaris_touch_i2c.c
+@@ -251,6 +251,34 @@
+ 	return ok;
+ }
+ 
++/* RMI4 register write: 0xff,page STOP, address, data bytes, STOP -- the mirror of
++ * the read protocol above. Needed for the F01 control registers: the IC reports no
++ * 2D data until F01 says it is configured. */
++static bool
++pt_write_reg(uint16_t reg, const uint8_t *data, unsigned len)
++{
++	bool ok = false;
++
++	if (!len || len > MAX_READ || !pt_start(false)) goto out;
++	if (!pt_write(I2C_ADDR << 1)) goto out;
++	if (!pt_write(0xff)) goto out;
++	if (!pt_write((uint8_t)(reg >> 8))) goto out;
++	pt_stop();
++	if (!pt_start(false)) goto out;
++	if (!pt_write(I2C_ADDR << 1)) goto out;
++	if (!pt_write((uint8_t)reg)) goto out;
++	for (unsigned i = 0; i < len; ++i) {
++		if (!pt_write(data[i])) goto out;
++	}
++	ok = true;
++out:
++	pt_stop();
++	if (!pt_idle()) {
++		return false;
++	}
++	return ok;
++}
++
+ static void
+ pt_wait(unsigned ms)
+ {
+@@ -344,8 +372,8 @@
+ 	}
+ 	/* Vendor S3330 DSX: object status, LE x/y, z, wx, wy.
+ 	 * Reject unknown object types and out-of-panel coordinates. */
+-	*x = (int)((unsigned)b[1] | ((unsigned)b[2] << 8));
+-	*y = (int)((unsigned)b[3] | ((unsigned)b[4] << 8));
++	*x = (int)((unsigned)b[1] | (((unsigned)b[2] & 0x0fu) << 8));
++	*y = (int)((unsigned)b[3] | (((unsigned)b[4] & 0x0fu) << 8));
+ 	if ((b[0] & 0x0f) != 1 || *x >= 1080 || *y >= 2160) {
+ 		return false;
+ 	}
+@@ -357,7 +385,7 @@
+ pt_thread(void *arg __unused, wait_result_t result __unused)
+ {
+ 	uint8_t f01[6] = {0}, f12[6] = {0}, query[16] = {0};
+-	uint8_t raw[MAX_FINGERS * FINGER_BYTES] = {0};
++	uint8_t raw[96] = {0};   /* the full 88-byte F12 data area */
+ 	pt_gpio = ml_io_map(NORTH_PA, 0x23000);
+ 	pt_reset_gpio = ml_io_map(NORTH_PA + RESET_CFG, 0x1000);
+ 	if (!pt_gpio || !pt_reset_gpio) {
+@@ -430,6 +458,22 @@
+ 	}
+ 	printf("POLARIS I2C: F01 device=0x%02x irq=0x%02x control=0x%02x (configured=%u)\n",
+ 	    f01_status[0], f01_status[1], f01_ctrl, (f01_ctrl >> 7) & 1u);
++	/* The IC reports no 2D data until F01 says it is configured: control+0 = 0x84
++	 * (configured, no sleep, sleep mode 0) and control+1 = 0x7f (enable every
++	 * interrupt source); reading the two data registers afterwards clears the
++	 * interrupt that was pending from power-up. */
++	uint32_t touch_cfg = 1;
++	(void)PE_parse_boot_argn("polaristouchcfg", &touch_cfg, sizeof(touch_cfg));
++	if (touch_cfg) {
++		uint8_t c[2] = { 0x84, 0x7f };
++		uint8_t clear[2] = { 0 };
++		bool wrote = pt_write_reg(f01[2], c, sizeof(c));
++		bool cleared = pt_read(f01[3], clear, sizeof(clear));
++		printf("POLARIS I2C: F01 config write=%u clear=%u status=0x%02x irq=0x%02x\n",
++		    wrote, cleared, clear[0], clear[1]);
++	} else {
++		printf("POLARIS I2C: F01 configuration disabled (polaristouchcfg=0)\n");
++	}
+ 	if (!pt_read(f12[0], query, sizeof(query))) {
+ 		printf("POLARIS I2C: F12 raw query read failed\n");
+ 		goto restore;
+@@ -476,13 +520,18 @@
+ 		for (;;) {
+ 			bool valid = true, present[MAX_FINGERS] = {0};
+ 			int x[MAX_FINGERS] = {0}, y[MAX_FINGERS] = {0};
+-			bool read_ok = pt_read(f12[3], raw, pt_fingers * FINGER_BYTES);
++			bool read_ok = pt_read(f12[3], raw, sizeof(raw));
+ 			if (frame_logged < 10) {
+ 				frame_logged++;
+ 				printf("POLARIS HID: frame %u: %02x %02x %02x %02x %02x %02x %02x %02x read=%u\n",
+ 				    frame_logged, raw[0], raw[1], raw[2], raw[3], raw[4],
+ 				    raw[5], raw[6], raw[7], read_ok);
++			} else if ((frame_logged % 500) == 0) {
++				printf("POLARIS HID: frame %u: %02x %02x %02x %02x %02x %02x %02x %02x read=%u\n",
++				    frame_logged, raw[0], raw[1], raw[2], raw[3], raw[4],
++				    raw[5], raw[6], raw[7], read_ok);
+ 			}
++			frame_logged++;
+ 			unsigned bad_slot = MAX_FINGERS;
+ 			if (read_ok) {
+ 				for (unsigned slot = 0; slot < pt_fingers; ++slot) {
