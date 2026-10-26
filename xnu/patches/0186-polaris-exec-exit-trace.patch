@@ -1,0 +1,68 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -2133,11 +2133,34 @@
+  *	EDEADLK				Process is being terminated
+  */
+ /* polaris: the exec trace hook (M6 userland bring-up) */
++static char sweet_exec_last_path[128];
++static bool sweet_exec_last_interesting;
++
+ static void
+ sweet_exec_note(struct image_params *imgp, const char *path)
+ {
++	strlcpy(sweet_exec_last_path, path, sizeof(sweet_exec_last_path));
++	sweet_exec_last_interesting = false;
++	{
++		static const char *keys[3] = { "osmesa", "sweet", "/usr/local/bin/" };
++		unsigned i;
++
++		for (i = 0; i < 3; i++) {
++			if (strstr(path, keys[i]) != NULL) {
++				sweet_exec_last_interesting = true;
++			}
++		}
++	}
+ 	printf("SWEET EXEC: %s (pid %d)\n", path, proc_pid(current_proc()));
+ 	(void)imgp;
++}
++
++static void
++sweet_exec_failed(int error)
++{
++	if (sweet_exec_last_interesting && error != 0) {
++		printf("SWEET EXEC FAIL: %s -> %d\n", sweet_exec_last_path, error);
++	}
+ }
+ 
+ static int
+@@ -4068,6 +4091,7 @@
+ 	 * as 0 and pretends the call succeeded.
+ 	 */
+ 	error = exec_activate_image(imgp);
++	sweet_exec_failed(error);
+ #if defined(HAS_APPLE_PAC)
+ 	ml_task_set_jop_pid_from_shared_region(new_task);
+ 	ml_task_set_disable_user_jop(new_task, imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE);
+@@ -5028,6 +5052,7 @@
+ 	 * as 0 and pretends the call succeeded.
+ 	 */
+ 	error = exec_activate_image(imgp);
++	sweet_exec_failed(error);
+ 	/* thread and task ref returned for vfexec case */
+ 
+ 	if (imgp->ip_new_thread != NULL) {
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1451,6 +1451,10 @@
+ int
+ exit1(proc_t p, int rv, int *retval)
+ {
++	if (strncmp(p->p_comm, "osmesa", 6) == 0 || strncmp(p->p_comm, "sweet", 5) == 0 ||
++	    strncmp(p->p_comm, "snapshottool", 12) == 0) {
++		printf("SWEET EXIT: %s pid %d rv %d\n", p->p_comm, p->p_pid, rv);
++	}
+ 	return exit1_internal(p, rv, retval, FALSE, TRUE, 0);
+ }
+ 
