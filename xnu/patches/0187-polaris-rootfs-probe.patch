@@ -15,7 +15,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  	return (int)(ack_hdr & 0xffu);
  }
  
-+static int sweet_fs_chan;
++extern void thread_terminate(thread_t thread);
 +
 +/* The iOS userland can only run what the kernel's own HFS+ driver sees. This
 + * probe prints, ten seconds after the GPU bring-up, whether the files the host
@@ -35,7 +35,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +	};
 +	unsigned i;
 +
-+	(void)tsleep(&sweet_fs_chan, PZERO, "sweetfs", 10 * hz);
++	delay(3000000);  /* 3 s: let the root mount finish */
 +	printf("SWEET FS: probe start\n");
 +	for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
 +		vfs_context_t ctx = vfs_context_create(NULL);
