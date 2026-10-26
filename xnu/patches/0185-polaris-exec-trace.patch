@@ -1,17 +1,38 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -4059,6 +4059,9 @@
- 	 * as 0 and pretends the call succeeded.
- 	 */
- 	error = exec_activate_image(imgp);
-+	if (error != 0 && sweet_exec_path[0] != 0) {
-+		printf("SWEET EXEC: FAILED %s -> %d\n", sweet_exec_path, error);
+@@ -4924,6 +4924,30 @@
+  * TODO:	Dynamic linker header address on stack is copied via suword()
+  */
+ int
++/* polaris: does this exec path belong to one of our userland GPU tests? */
++static bool
++sweet_exec_interesting(const char *path)
++{
++	static const char *keys[3] = { "sweet", "osmesa", "/usr/local/bin/" };
++	unsigned i;
++
++	if (path == NULL) {
++		return false;
 +	}
- #if defined(HAS_APPLE_PAC)
- 	ml_task_set_jop_pid_from_shared_region(new_task);
- 	ml_task_set_disable_user_jop(new_task, imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE);
-@@ -4932,6 +4935,7 @@
++	for (i = 0; i < 3; i++) {
++		const char *k = keys[i];
++		unsigned kl = (unsigned)strlen(k);
++		const char *p;
++
++		for (p = path; *p != 0; p++) {
++			if (strncmp(p, k, kl) == 0) {
++				return true;
++			}
++		}
++	}
++	return false;
++}
++
+ __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval __unused)
+ {
+ 	struct image_params *imgp = NULL;
+@@ -4932,6 +4956,7 @@
  	int error;
  	int is_64 = IS_64BIT_PROCESS(p);
  	struct vfs_context context;
@@ -19,15 +40,14 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	struct uthread  *uthread = NULL;
  	task_t old_task = current_task();
  	task_t new_task = NULL;
-@@ -4959,6 +4963,15 @@
+@@ -4959,6 +4984,14 @@
  	/* Initialize the common data in the image_params structure */
  	imgp->ip_user_fname = uap->fname;
  	imgp->ip_user_argv = uap->argp;
 +	sweet_exec_path[0] = 0;
 +	if (uap->fname != USER_ADDR_NULL &&
 +	    copyinstr(uap->fname, sweet_exec_path, sizeof(sweet_exec_path), NULL) == 0 &&
-+	    (strstr(sweet_exec_path, "sweet") != NULL || strstr(sweet_exec_path, "osmesa") != NULL ||
-+	    strstr(sweet_exec_path, "/usr/local/bin/") != NULL)) {
++	    sweet_exec_interesting(sweet_exec_path)) {
 +		printf("SWEET EXEC: trying %s (pid %d)\n", sweet_exec_path, proc_pid(p));
 +	} else {
 +		sweet_exec_path[0] = 0;
@@ -35,3 +55,13 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	imgp->ip_user_envv = uap->envp;
  	imgp->ip_vattr = vap;
  	imgp->ip_origvattr = origvap;
+@@ -5019,6 +5052,9 @@
+ 	 * as 0 and pretends the call succeeded.
+ 	 */
+ 	error = exec_activate_image(imgp);
++	if (error != 0 && sweet_exec_path[0] != 0) {
++		printf("SWEET EXEC: FAILED %s -> %d\n", sweet_exec_path, error);
++	}
+ 	/* thread and task ref returned for vfexec case */
+ 
+ 	if (imgp->ip_new_thread != NULL) {
