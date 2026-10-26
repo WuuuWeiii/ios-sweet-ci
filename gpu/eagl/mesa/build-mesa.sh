@@ -5,7 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${GPU_EAGL_WORK:?set GPU_EAGL_WORK}"
 TAG="${MESA_TAG:-mesa-25.0.7}"
-ARCH="${ARCH:-arm64e}"
+ARCH="${ARCH:-arm64}"
 mkdir -p "$WORK"; cd "$WORK"
 python3 -m venv venv 2>/dev/null || true
 ./venv/bin/pip -q install --disable-pip-version-check mako pyyaml packaging setuptools meson ninja
@@ -50,7 +50,7 @@ fi
 # the libdrm stand-in (this repo's kernel ABI: SweetAdreno630)
 bash "$HERE/../../freedreno-sweet/build.sh" "$WORK/drm-standin-out" >/dev/null
 mkdir -p drm-standin pc
-cp "$WORK/drm-standin-out/libdrm.2.arm64e.dylib" drm-standin/libdrm.2.dylib
+cp "$WORK/drm-standin-out/libdrm.2.arm64.dylib" drm-standin/libdrm.2.dylib
 ln -sf libdrm.2.dylib drm-standin/libdrm.dylib
 cat > pc/libdrm.pc <<EOP
 prefix=$WORK/libdrm
