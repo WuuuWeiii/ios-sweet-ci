@@ -95,7 +95,7 @@ BLD="$WORK/build-hw"
 if [ ! -d "$BLD" ]; then
   ( cd mesa && # Bergamota's sweet_hw speaks a newer kernel ABI than our SweetAdreno630 client; replace it
 # with the minimal freedreno screen creator (offscreen M6 works, IOSurface zero-copy off).
-cp -f "$HERE/sweet_hw_min.c" mesa/src/gallium/targets/osmesa/sweet_hw.c
+cp -f "$HERE/sweet_hw_min.c" src/gallium/targets/osmesa/sweet_hw.c
 
 PKG_CONFIG_PATH="$WORK/pc" PKG_CONFIG_LIBDIR="$WORK/pc" meson setup "$BLD" --cross-file "$CROSS" --buildtype=release \
     -Dgallium-drivers=softpipe,freedreno -Dfreedreno-kmds=msm -Dgallium-xa=disabled -Dtools= \
