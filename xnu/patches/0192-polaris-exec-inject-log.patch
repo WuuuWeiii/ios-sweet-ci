@@ -1,0 +1,18 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c\n--- a/bsd/kern/kern_exec.c\n+++ b/bsd/kern/kern_exec.c\n@@ -5665,6 +5665,7 @@
+ 				}
+ 			}
+ 			strlcpy(exec_inject_conf, arg, sizeof(exec_inject_conf));
++			printf("SWEET INJECT: conf=%s\n", exec_inject_conf);
+ 		}
+ 		exec_inject_loaded = 1;
+ 	}
+@@ -5708,6 +5709,9 @@
+ 			env[used] = 0;
+ 			any = true;
+ 		}
++	}
++	if (any) {
++		printf("SWEET INJECT: %.*s <- %s\n", (int)namelen, name, env);
+ 	}
+ 	return any;
+ }
