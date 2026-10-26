@@ -1,0 +1,62 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1973,10 +1973,54 @@
+ static int
+ sweet_gpu_dev_ioctl(dev_t dev, u_long cmd, caddr_t data, int flags, struct proc *p)
+ {
+-	int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
+-
+-	printf("SWEET GPU: ioctl %#lx -> %d\n", cmd, rc);
+-	return rc;
++	switch (cmd) {
++	case SWEET_GPU_IOCTL_INFO: {
++		struct sweet_gpu_info *i = (struct sweet_gpu_info *)data;
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: info -> %d abi=%u flags=%#x va=%#x+%#x fence=%u\n",
++		    rc, i->abi_version, i->flags, i->va_start, i->va_size, i->last_fence);
++		return rc;
++	}
++	case SWEET_GPU_IOCTL_GEM_NEW: {
++		struct sweet_gpu_gem_new *n = (struct sweet_gpu_gem_new *)data;
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: gem_new size=%u flags=%#x -> %d handle=%u iova=%#x\n",
++		    n->size, n->flags, rc, n->handle, n->iova);
++		return rc;
++	}
++	case SWEET_GPU_IOCTL_GEM_INFO: {
++		struct sweet_gpu_gem_info *g = (struct sweet_gpu_gem_info *)data;
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: gem_info handle=%u op=%u -> %d value=%#x\n",
++		    g->handle, g->op, rc, g->value);
++		return rc;
++	}
++	case SWEET_GPU_IOCTL_GEM_SUBMIT: {
++		struct sweet_gpu_gem_submit *b = (struct sweet_gpu_gem_submit *)data;
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: submit handle=%u off=%u dwords=%u -> %d fence=%u\n",
++		    b->handle, b->offset, b->dwords, rc, b->fence);
++		return rc;
++	}
++	case SWEET_GPU_IOCTL_WAIT_FENCE: {
++		struct sweet_gpu_wait *w = (struct sweet_gpu_wait *)data;
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: wait fence=%u timeout=%ums -> %d\n",
++		    w->fence, w->timeout_ms, rc);
++		return rc;
++	}
++	case SWEET_GPU_IOCTL_SELECT: {
++		struct sweet_gpu_select *sel = (struct sweet_gpu_select *)data;
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: select handle=%u -> %d\n", sel->handle, rc);
++		return rc;
++	}
++	default: {
++		int rc = gpu_dev_ioctl(dev, cmd, data, flags, p);
++		printf("SWEET GPU: ioctl %#lx -> %d\n", cmd, rc);
++		return rc;
++	}
++	}
+ }
+ 
+ static int
