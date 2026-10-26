@@ -24,6 +24,6 @@ xcrun --sdk iphoneos clang --target=arm64-apple-ios16.0 -isysroot "$SDK" -O2 -dy
     -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
     "$OUT/libOSMesa.8.dylib" \
     -Wl,-rpath,/usr/local/lib -Wl,-adhoc_codesign \
-    -o "$OUT/libsweetgl.dylib" eagl.c gl_osmesa.c
+    -o "$OUT/libsweetgl.dylib" eagl.c gl_osmesa.c probe.c
 ls -l "$OUT/libsweetgl.dylib"
 file "$OUT/libsweetgl.dylib"
