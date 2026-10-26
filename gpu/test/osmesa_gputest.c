@@ -18,6 +18,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <mach-o/dyld.h>
 
 /* /dev/sweetgpu debug ioctl (kernel patch 0184): one line -> kernel log */
 struct sweet_gpu_log { char msg[1008]; };
@@ -119,6 +120,18 @@ main(void)
 	}
 
 	say("GPUTEST: start (Mesa OSMesa offscreen, %dx%d)\n", WIDTH, HEIGHT);
+	/* The crash dump names no images; log the dyld map now so a crash address can be
+	 * attributed to the main executable, libOSMesa, libdrm or the shared cache. */
+	{
+		uint32_t n = _dyld_image_count();
+
+		say("GPUTEST: dyld has %u images\n", n);
+		for (uint32_t i = 0; i < n && i < 40; i++) {
+			const char *nm = _dyld_get_image_name(i);
+			const struct mach_header *mh = _dyld_get_image_header(i);
+			say("GPUTEST: image %u %p %s\n", i, (const void *)mh, nm ? nm : "?");
+		}
+	}
 
 	say("GPUTEST: calling OSMesaCreateContextAttribs\n");
 	ctx = OSMesaCreateContextAttribs(attribs, NULL);
