@@ -1,10 +1,10 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -4924,6 +4924,30 @@
+@@ -4923,6 +4923,30 @@
+  *
   * TODO:	Dynamic linker header address on stack is copied via suword()
   */
- int
 +/* polaris: does this exec path belong to one of our userland GPU tests? */
 +static bool
 +sweet_exec_interesting(const char *path)
@@ -29,9 +29,9 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	return false;
 +}
 +
+ int
  __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval __unused)
  {
- 	struct image_params *imgp = NULL;
 @@ -4932,6 +4956,7 @@
  	int error;
  	int is_64 = IS_64BIT_PROCESS(p);
