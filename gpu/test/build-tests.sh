@@ -10,12 +10,12 @@ SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 mkdir -p "$TESTS"
 
 echo "== sweet-iokit-test (IOKit user client)"
-xcrun --sdk iphoneos clang --target=arm64-apple-ios16.0 -isysroot "$SDK" -O2 \
+xcrun --sdk iphoneos clang --target=arm64e-apple-ios16.0 -isysroot "$SDK" -O2 \
     -o "$TESTS/sweet-iokit-test" "$HERE/sweet-iokit-test.c" \
     -framework IOKit -framework CoreFoundation -Wl,-adhoc_codesign
 
 echo "== osmesa_gputest (Mesa freedreno offscreen)"
-xcrun --sdk iphoneos clang --target=arm64-apple-ios16.0 -isysroot "$SDK" -O2 \
+xcrun --sdk iphoneos clang --target=arm64e-apple-ios16.0 -isysroot "$SDK" -O2 \
     -I"$WORK/mesa/include" -I"$WORK/mesa/include/GLES2" -I"$WORK/mesa/include/KHR" \
     -o "$TESTS/osmesa_gputest" "$HERE/osmesa_gputest.c" \
     "$OUT/libOSMesa.8.dylib" "$OUT/libdrm.2.dylib" \
