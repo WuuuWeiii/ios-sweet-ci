@@ -6,11 +6,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${1:-$HERE/out}"
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 mkdir -p "$OUT"
-xcrun --sdk iphoneos clang -arch arm64e -miphoneos-version-min=16.0 -isysroot "$SDK" \
+xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=16.0 -isysroot "$SDK" \
     -O2 -g -Wall -Wextra -fvisibility=hidden \
     -dynamiclib -install_name @rpath/libdrm.2.dylib -current_version 2.4.0 -compatibility_version 2.0.0 \
-    "$HERE/sweet_drm.c" -o "$OUT/libdrm.2.arm64e.dylib" \
+    "$HERE/sweet_drm.c" -o "$OUT/libdrm.2.arm64.dylib" \
     -framework IOKit -framework CoreFoundation
-cp -f "$OUT/libdrm.2.arm64e.dylib" "$OUT/libdrm.2.dylib"
+cp -f "$OUT/libdrm.2.arm64.dylib" "$OUT/libdrm.2.dylib"
 codesign -s - -f "$OUT/libdrm.2.dylib" 2>/dev/null || true
 ls -l "$OUT"
