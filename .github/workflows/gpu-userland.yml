@@ -21,6 +21,11 @@ jobs:
           bash gpu/eagl/mesa/build-mesa.sh
           ls -l "$GPU_EAGL_WORK/out"
 
+      - name: Build EAGL shim (libsweetgl) for CoreAnimation's GL renderer
+        env:
+          GPU_EAGL_WORK: ${{ runner.temp }}/gpu-eagl
+        run: |
+          bash gpu/eagl/build-eagl.sh
       - name: Build userspace GPU tests (IOKit + OSMesa)
         env:
           GPU_EAGL_WORK: ${{ runner.temp }}/gpu-eagl
