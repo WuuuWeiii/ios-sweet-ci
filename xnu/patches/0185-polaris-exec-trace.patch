@@ -1,67 +1,26 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -4923,6 +4923,30 @@
-  *
-  * TODO:	Dynamic linker header address on stack is copied via suword()
+@@ -2132,6 +2132,14 @@
+  *	<ex_imgact>:???			[anything an imgact can return]
+  *	EDEADLK				Process is being terminated
   */
-+/* polaris: does this exec path belong to one of our userland GPU tests? */
-+static bool
-+sweet_exec_interesting(const char *path)
++/* polaris: the exec trace hook (M6 userland bring-up) */
++static void
++sweet_exec_note(struct image_params *imgp, const char *path)
 +{
-+	static const char *keys[3] = { "sweet", "osmesa", "/usr/local/bin/" };
-+	unsigned i;
-+
-+	if (path == NULL) {
-+		return false;
-+	}
-+	for (i = 0; i < 3; i++) {
-+		const char *k = keys[i];
-+		unsigned kl = (unsigned)strlen(k);
-+		const char *p;
-+
-+		for (p = path; *p != 0; p++) {
-+			if (strncmp(p, k, kl) == 0) {
-+				return true;
-+			}
-+		}
-+	}
-+	return false;
++	printf("SWEET EXEC: %s (pid %d)\n", path, proc_pid(current_proc()));
++	(void)imgp;
 +}
 +
- int
- __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval __unused)
+ static int
+ exec_activate_image(struct image_params *imgp)
  {
-@@ -4932,6 +4956,7 @@
- 	int error;
- 	int is_64 = IS_64BIT_PROCESS(p);
- 	struct vfs_context context;
-+	char sweet_exec_path[128];
- 	struct uthread  *uthread = NULL;
- 	task_t old_task = current_task();
- 	task_t new_task = NULL;
-@@ -4959,6 +4984,14 @@
- 	/* Initialize the common data in the image_params structure */
- 	imgp->ip_user_fname = uap->fname;
- 	imgp->ip_user_argv = uap->argp;
-+	sweet_exec_path[0] = 0;
-+	if (uap->fname != USER_ADDR_NULL &&
-+	    copyinstr(uap->fname, sweet_exec_path, sizeof(sweet_exec_path), NULL) == 0 &&
-+	    sweet_exec_interesting(sweet_exec_path)) {
-+		printf("SWEET EXEC: trying %s (pid %d)\n", sweet_exec_path, proc_pid(p));
-+	} else {
-+		sweet_exec_path[0] = 0;
-+	}
- 	imgp->ip_user_envv = uap->envp;
- 	imgp->ip_vattr = vap;
- 	imgp->ip_origvattr = origvap;
-@@ -5019,6 +5052,9 @@
- 	 * as 0 and pretends the call succeeded.
- 	 */
- 	error = exec_activate_image(imgp);
-+	if (error != 0 && sweet_exec_path[0] != 0) {
-+		printf("SWEET EXEC: FAILED %s -> %d\n", sweet_exec_path, error);
-+	}
- 	/* thread and task ref returned for vfexec case */
+@@ -2164,6 +2172,7 @@
  
- 	if (imgp->ip_new_thread != NULL) {
+ 	/* Use excpath, which contains the copyin-ed exec path */
+ 	DTRACE_PROC1(exec, uintptr_t, excpath);
++	sweet_exec_note(imgp, excpath);
+ 
+ 	ndp = kalloc_type(struct nameidata, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+ 
