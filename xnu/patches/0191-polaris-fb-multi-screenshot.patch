@@ -1,0 +1,84 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -896,6 +896,7 @@
+ 
+ #define SWEET_SHOT_FIRST_BLOCK  5500ULL        /* oops partition, 4 KiB blocks */
+ #define SWEET_SHOT_MAX_BYTES    (1080u * 4u * 2400u)
++#define SWEET_SHOT_SLOT_BLOCKS   2300ULL
+ 
+ struct sweet_shot_header {
+ 	char     magic[8];
+@@ -905,7 +906,7 @@
+ 
+ /* Dump the panel framebuffer into the oops partition after <seconds>. */
+ static void
+-sweet_fb_save_shot(void)
++sweet_fb_save_shot(uint32_t slot)
+ {
+ 	struct sweet_shot_header h;
+ 	void *bounce = (void *)(su.dma + DMA_BOUNCE);
+@@ -926,19 +927,23 @@
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	bzero(bounce, UFS_BLOCK);
+ 	memcpy(bounce, &h, sizeof(h));
+-	(void)ufs_write_blocks_raw(SWEET_SHOT_FIRST_BLOCK, 1);
++	uint64_t first = SWEET_SHOT_FIRST_BLOCK + (uint64_t)slot * SWEET_SHOT_SLOT_BLOCKS;
++	if (first + 1 + (bytes + UFS_BLOCK - 1) / UFS_BLOCK > su.first_block + su.nblocks) {
++		first = SWEET_SHOT_FIRST_BLOCK;
++	}
++	(void)ufs_write_blocks_raw(first, 1);
+ 	uint32_t nblk = (bytes + UFS_BLOCK - 1) / UFS_BLOCK;
+ 	for (uint32_t i = 0; i < nblk; i++) {
+ 		bzero(bounce, UFS_BLOCK);
+ 		uint32_t off = i * UFS_BLOCK;
+ 		uint32_t n = MIN(UFS_BLOCK, bytes - off);
+ 		memcpy(bounce, (const void *)(sweet_fb_pixels + off), n);
+-		(void)ufs_write_blocks_raw(SWEET_SHOT_FIRST_BLOCK + 1 + i, 1);
++		(void)ufs_write_blocks_raw(first + 1 + i, 1);
+ 	}
+ 	(void)ufs_sync_cache();
+ 	lck_mtx_unlock(&sweet_ufs_lock);
+-	printf("SWEET SHOT: framebuffer %ux%u saved at block %llu\n",
+-	    sweet_fb_width, sweet_fb_height, SWEET_SHOT_FIRST_BLOCK);
++	printf("SWEET SHOT: framebuffer %ux%u saved at block %llu (slot %u)\n",
++	    sweet_fb_width, sweet_fb_height, first, slot);
+ }
+ 
+ static void
+@@ -948,10 +953,19 @@
+ 	uint64_t flushed = 0, seq = 0;
+ 	void *bounce = (void *)(su.dma + DMA_BOUNCE);
+ 	uint32_t dbg = 0, reset_after = 0, shot_after = 0;
++	uint32_t shot_iv = 300, shot_n = 4, shot_taken = 0;
+ 	uint64_t reset_deadline = 0, shot_deadline = 0;
+ 	bool shot_done = false;
+ 	PE_parse_boot_argn("ufsdbg", &dbg, sizeof(dbg));
+ 	PE_parse_boot_argn("sweetfbshot", &shot_after, sizeof(shot_after));
++	PE_parse_boot_argn("sweetfbshotiv", &shot_iv, sizeof(shot_iv));
++	PE_parse_boot_argn("sweetfbshotn", &shot_n, sizeof(shot_n));
++	if (!shot_iv) {
++		shot_iv = 300;
++	}
++	if (!shot_n || shot_n > 8) {
++		shot_n = shot_n ? 8 : 4;
++	}
+ 	if (shot_after) {
+ 		nanoseconds_to_absolutetime((uint64_t)shot_after * 1000000000ULL, &shot_deadline);
+ 		shot_deadline += mach_absolute_time();
+@@ -1008,8 +1022,13 @@
+ 		}
+ 		flushed = total;
+ 		if (shot_deadline && !shot_done && mach_absolute_time() > shot_deadline) {
+-			shot_done = true;
+-			sweet_fb_save_shot();
++			sweet_fb_save_shot(shot_taken);
++			if (++shot_taken >= shot_n) {
++				shot_done = true;
++			} else {
++				nanoseconds_to_absolutetime((uint64_t)shot_iv * 1000000000ULL, &shot_deadline);
++				shot_deadline += mach_absolute_time();
++			}
+ 		}
+ 		if (dbg) {
+ 			sweet_dbg_dump();
