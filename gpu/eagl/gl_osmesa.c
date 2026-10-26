@@ -1,12 +1,13 @@
 /*
- * The OpenGL ES library behind src/eagl.c when that library is Mesa as tools/mk-mesa.sh builds
- * it: any of its drivers that draws into memory, reached through its off-screen interface
- * (OSMesa, given an OpenGL ES profile by tools/mesa/osmesa-es-profile.patch).
+ * The OpenGL ES library behind src/eagl.c when that library is our Mesa build
+ * (gpu/eagl/mesa/build-mesa.sh: 25.0.7 + the Bergamota patch, OSMesa with an
+ * OpenGL ES profile and the OSMesaSweet* direct-surface helpers).
  *
- * This file is all that knows which library draws. eagl.c wants four things besides the gl*
- * functions themselves: a context of a version of OpenGL ES, that context made the calling
- * thread's, a context taken away again, and a name for the log. A library with another way to
- * its contexts gets another file like this one.
+ * eagl.c wants four things besides the gl* functions: a context of some version
+ * of OpenGL ES, that context made the calling thread's, a context taken away
+ * again, a name for the log, and (optionally) "make this texture BE the
+ * IOSurface" - done here through OSMesaSweetAttachDirect, which is the
+ * Bergamota patch's equivalent of OES_EGL_image.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -15,7 +16,7 @@
 
 #include "hakios.gl.h"
 
-/* GL/osmesa.h of Mesa */
+/* Mesa's GL/osmesa.h, as the Bergamota patch interprets it */
 #define OSMESA_RGBA                     0x1908
 #define OSMESA_FORMAT                   0x22
 #define OSMESA_DEPTH_BITS               0x30
@@ -23,9 +24,12 @@
 #define OSMESA_PROFILE                  0x33
 #define OSMESA_CONTEXT_MAJOR_VERSION    0x36
 #define OSMESA_CONTEXT_MINOR_VERSION    0x37
-#define OSMESA_ES_PROFILE               0x38
+/* value of OSMESA_PROFILE that the Bergamota patch accepts for a GLES context */
+#define SWEET_ES_PROFILE                0x36
+
 #define GL_UNSIGNED_BYTE                0x1401
 #define GL_TEXTURE_2D                   0x0de1
+#define GL_TEXTURE_BINDING_2D           0x8069
 #define GL_RENDERER                     0x1f01
 
 typedef struct osmesa_context *OSMesaContext;
@@ -35,11 +39,10 @@ extern void OSMesaDestroyContext(OSMesaContext context);
 extern void (*OSMesaGetProcAddress(const char *name))(void);
 extern const unsigned char *glGetString(unsigned name);
 extern unsigned glGetError(void);
+extern void glGetIntegerv(unsigned name, int *value);
 
-/*
- * OSMesa draws its "window" into memory handed to it. Nothing here draws into a window (the
- * window server draws into textures of its own, see eagl.c): a few pixels will do.
- */
+/* OSMesa draws its "window" into memory handed to it. Nothing here draws into a window
+ * (the window server draws into textures of its own, see eagl.c): a few pixels will do. */
 #define WINDOW  16
 
 struct hakios_gl {
@@ -52,7 +55,8 @@ hakios_gl_create(int version)
 {
 	const int attributes[] = {
 		OSMESA_FORMAT, OSMESA_RGBA, OSMESA_DEPTH_BITS, 24, OSMESA_STENCIL_BITS, 8,
-		OSMESA_PROFILE, OSMESA_ES_PROFILE, OSMESA_CONTEXT_MAJOR_VERSION, version, OSMESA_CONTEXT_MINOR_VERSION, 0,
+		OSMESA_PROFILE, SWEET_ES_PROFILE,
+		OSMESA_CONTEXT_MAJOR_VERSION, version, OSMESA_CONTEXT_MINOR_VERSION, 0,
 		0
 	};
 	struct hakios_gl *gl = calloc(1, sizeof(*gl));
@@ -83,33 +87,39 @@ hakios_gl_destroy(struct hakios_gl *gl)
 const char *
 hakios_gl_library(void)
 {
-	return "Mesa, off-screen (OSMesa)";
+	return "Mesa, off-screen (OSMesa, Bergamota patch)";
 }
 
 /*
- * OES_EGL_image, with the IOSurface's ID as the image (tools/mesa/freedreno-darwin.patch: the
- * kernel's GPU driver makes a buffer of the surface's memory). The drivers that draw in memory
- * of their own with this processor are not asked: they refuse every time.
+ * The texture bound to GL_TEXTURE_2D is to become the IOSurface's own memory: what is drawn
+ * into it is in the surface, what is in the surface is what the texture shows, no copy.
+ * OSMesaSweetAttachDirect(name, surface) is the Bergamota patch's version of that (the
+ * kernel's GPU driver makes a BO of the surface memory; on the CPU drivers it fails).
+ * 0: not done, the caller fills/reads the texture with OpenGL ES calls instead.
  */
 int
 hakios_gl_surface_texture(struct hakios_gl *gl, uint32_t surface)
 {
-	static void (*image_target)(unsigned target, void *image);
-	static int asked, software;
+	static int (*attach_direct)(unsigned name, uint32_t surface);
+	static int asked;
 
 	(void)gl;
 	if (!asked) {
-		const char *renderer = (const char *)glGetString(GL_RENDERER);
-
 		asked = 1;
-		image_target = (void (*)(unsigned, void *))OSMesaGetProcAddress("glEGLImageTargetTexture2DOES");
-		software = renderer == NULL || strstr(renderer, "softpipe") != NULL || strstr(renderer, "llvmpipe") != NULL;
+		attach_direct = (int (*)(unsigned, uint32_t))(void *)OSMesaGetProcAddress("OSMesaSweetAttachDirect");
 	}
-	if (image_target == NULL || software) {
+	if (attach_direct == NULL) {
+		return 0;
+	}
+	int name = 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &name);
+	if (name <= 0) {
 		return 0;
 	}
 	while (glGetError() != 0) {
 	}
-	image_target(GL_TEXTURE_2D, (void *)(uintptr_t)surface);
+	if (!attach_direct((unsigned)name, surface)) {
+		return 0;
+	}
 	return glGetError() == 0;
 }
