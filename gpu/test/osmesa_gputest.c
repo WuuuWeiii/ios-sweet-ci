@@ -120,17 +120,21 @@ main(void)
 
 	say("GPUTEST: start (Mesa OSMesa offscreen, %dx%d)\n", WIDTH, HEIGHT);
 
+	say("GPUTEST: calling OSMesaCreateContextAttribs\n");
 	ctx = OSMesaCreateContextAttribs(attribs, NULL);
+	say("GPUTEST: OSMesaCreateContextAttribs -> %p\n", (void *)ctx);
 	if (ctx == NULL) {
 		say("GPUTEST: OSMesaCreateContextAttribs failed\n");
 		return 1;
 	}
+	say("GPUTEST: calling OSMesaMakeCurrent\n");
 	buf = calloc(1, WIDTH * HEIGHT * 4);
 	if (buf == NULL || !OSMesaMakeCurrent(ctx, buf, GL_UNSIGNED_BYTE, WIDTH, HEIGHT)) {
 		say("GPUTEST: OSMesaMakeCurrent failed\n");
 		return 1;
 	}
 
+	say("GPUTEST: MakeCurrent done, glGetString\n");
 	renderer = (const char *)glGetString(GL_RENDERER);
 	version = (const char *)glGetString(GL_VERSION);
 	vendor = (const char *)glGetString(GL_VENDOR);
