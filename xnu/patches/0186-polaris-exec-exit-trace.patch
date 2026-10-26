@@ -1,7 +1,15 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -2133,11 +2133,46 @@
+@@ -1266,6 +1266,7 @@
+ #if __x86_64__
+ 		const char *excpath;
+ 		error = exec_save_path(imgp, imgp->ip_user_fname, imgp->ip_seg, &excpath);
++	sweet_exec_stage("save_path", error);
+ 		os_log_error(OS_LOG_DEFAULT, "Unsupported 32-bit executable: \"%s\"", (error) ? imgp->ip_vp->v_name : excpath);
+ #endif
+ 		error = EBADARCH;
+@@ -2133,11 +2134,60 @@
   *	EDEADLK				Process is being terminated
   */
  /* polaris: the exec trace hook (M6 userland bring-up) */
@@ -36,7 +44,21 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +		}
 +	}
  	printf("SWEET EXEC: %s (pid %d)\n", path, proc_pid(current_proc()));
++	if (sweet_exec_last_interesting) {
++		printf("SWEET EXEC ROOT: subsystem '%s' pid %d\n",
++		    imgp->ip_subsystem_root_path ? imgp->ip_subsystem_root_path : "(none)",
++		    proc_pid(current_proc()));
++	}
  	(void)imgp;
++}
++
++static void
++sweet_exec_stage(const char *stage, int error)
++{
++	if (sweet_exec_last_interesting) {
++		printf("SWEET EXEC STAGE %s -> %d (%s) pid %d\n", stage, error,
++		    sweet_exec_last_path, proc_pid(current_proc()));
++	}
 +}
 +
 +static void
@@ -48,7 +70,31 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  }
  
  static int
-@@ -4068,6 +4103,7 @@
+@@ -2161,6 +2211,7 @@
+ 	}
+ 
+ 	error = execargs_alloc(imgp);
++	sweet_exec_stage("execargs", error);
+ 	if (error) {
+ 		goto bad_notrans;
+ 	}
+@@ -2181,6 +2232,7 @@
+ 
+ again:
+ 	error = namei(ndp);
++	sweet_exec_stage("namei", error);
+ 	if (error) {
+ 		if (error == ERESTART) {
+ 			error = EINTR;
+@@ -2210,6 +2262,7 @@
+ 	}
+ 
+ 	error = exec_check_permissions(imgp);
++	sweet_exec_stage("permissions", error);
+ 	if (error) {
+ 		goto bad;
+ 	}
+@@ -4068,6 +4121,7 @@
  	 * as 0 and pretends the call succeeded.
  	 */
  	error = exec_activate_image(imgp);
@@ -56,7 +102,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  #if defined(HAS_APPLE_PAC)
  	ml_task_set_jop_pid_from_shared_region(new_task);
  	ml_task_set_disable_user_jop(new_task, imgp->ip_flags & IMGPF_NOJOP ? TRUE : FALSE);
-@@ -5028,6 +5064,7 @@
+@@ -5028,6 +5082,7 @@
  	 * as 0 and pretends the call succeeded.
  	 */
  	error = exec_activate_image(imgp);
