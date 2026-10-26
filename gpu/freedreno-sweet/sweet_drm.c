@@ -354,6 +354,19 @@ sweet_call(uint32_t sel, void *data, size_t size)
 	if (want == 0 || want > sizeof(in)) {
 		return -ENOSYS;
 	}
+	if (sel == SWEET_GPU_SEL_SUBMITQUEUE_NEW) {
+		/* This kernel's user client does not implement submit queues; Mesa only needs an
+		 * id back (0 = the default queue the kernel already has). */
+		struct sweet_msm_submitqueue *q = (struct sweet_msm_submitqueue *)data;
+
+		klog_drm("SWEETDRM: SUBMITQUEUE_NEW flags=%#x prio=%u -> id 0", q->flags, q->prio);
+		q->id = 0;
+		return 0;
+	}
+	if (sel == SWEET_GPU_SEL_SUBMITQUEUE_CLOSE || sel == SWEET_GPU_SEL_SUBMITQUEUE_QUERY) {
+		klog_drm("SWEETDRM: submitqueue %#x answered locally", sel);
+		return 0;
+	}
 	if (sel == SWEET_GPU_SEL_GEM_MADVISE) {
 		/* The kernel never purges a BO: its MADVISE only checks the handle and answers retained = 1. Mesa's BO cache
 		 * calls it on every cached allocation and free (WILLNEED/DONTNEED), a kernel round trip each: 43 % of the
@@ -384,6 +397,12 @@ sweet_call(uint32_t sel, void *data, size_t size)
 			klog_drm("SWEETDRM: INFO kr=%#x abi=%u.%u flags=%#x va=%#llx+%#llx",
 			    kr, o->abi_version, o->abi_minor, o->flags,
 			    (unsigned long long)o->va_start, (unsigned long long)o->va_size);
+			break;
+		}
+		case SWEET_GPU_SEL_GET_PARAM: {
+			const struct sweet_msm_param *i = (const void *)in, *o = (const void *)out;
+			klog_drm("SWEETDRM: GET_PARAM param=%#x kr=%#x value=%#llx",
+			    i->param, kr, (unsigned long long)o->value);
 			break;
 		}
 		case SWEET_GPU_SEL_GEM_NEW: {
