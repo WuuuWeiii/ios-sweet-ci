@@ -120,16 +120,22 @@ main(void)
 	}
 
 	say("GPUTEST: start (Mesa OSMesa offscreen, %dx%d)\n", WIDTH, HEIGHT);
-	/* The crash dump names no images; log the dyld map now so a crash address can be
-	 * attributed to the main executable, libOSMesa, libdrm or the shared cache. */
+	/* The crash dump names no images; log the base addresses of the three images that
+	 * matter for a crash (a burst of 40 console writes wedged the kernel before). */
 	{
 		uint32_t n = _dyld_image_count();
+		const char *nm;
+		uint32_t i;
 
-		say("GPUTEST: dyld has %u images\n", n);
-		for (uint32_t i = 0; i < n && i < 40; i++) {
-			const char *nm = _dyld_get_image_name(i);
-			const struct mach_header *mh = _dyld_get_image_header(i);
-			say("GPUTEST: image %u %p %s\n", i, (const void *)mh, nm ? nm : "?");
+		for (i = 0; i < n; i++) {
+			nm = _dyld_get_image_name(i);
+			if (nm == 0) {
+				continue;
+			}
+			if (strstr(nm, "libOSMesa") || strstr(nm, "libdrm") || strstr(nm, "fairplayd") ||
+			    strstr(nm, "osmesa_gputest")) {
+				say("GPUTEST: image %p %s\n", (const void *)_dyld_get_image_header(i), nm);
+			}
 		}
 	}
 
