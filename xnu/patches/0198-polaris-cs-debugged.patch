@@ -1,0 +1,16 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7515,6 +7515,12 @@
+ 	 * make it reject our adhoc-signed dylibs. Clear them.
+ 	 */
+ 	imgp->ip_csflags &= ~(CS_RESTRICT | CS_HARD | CS_REQUIRE_LV | CS_FORCED_LV);
++	/*
++	 * polaris: dyld4 only reads the DYLD_* environment (DYLD_INSERT_LIBRARIES, our
++	 * injected GPU userland) for a platform binary when CS_DEBUGGED is set.
++	 * Our launchd jobs are Apple platform binaries, so grant it to every exec.
++	 */
++	imgp->ip_csflags |= CS_DEBUGGED;
+ #endif
+ 	proc_lock(p);
+ 	proc_csflags_update(p, imgp->ip_csflags);
