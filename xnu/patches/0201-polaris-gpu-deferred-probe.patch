@@ -1,12 +1,13 @@
 diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 --- a/bsd/dev/sweet_gpu.c
 +++ b/bsd/dev/sweet_gpu.c
-@@ -2573,7 +2573,46 @@
+@@ -2572,8 +2572,47 @@
+ 	return (int)(ack_hdr & 0xffu);
  }
  
- void
 +static void
 +sweet_gpu_probe_now(void);
++extern int hz;
 +
 +static int gpu_probe_chan;
 +extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
@@ -27,7 +28,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +	sweet_gpu_probe_now();
 +}
 +
-+void
+ void
  sweet_gpu_probe(void)
 +{
 +	uint32_t delay = 0;
