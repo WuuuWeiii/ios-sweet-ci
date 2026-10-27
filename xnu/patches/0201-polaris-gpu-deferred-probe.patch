@@ -1,0 +1,50 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2573,7 +2573,46 @@
+ }
+ 
+ void
++static void
++sweet_gpu_probe_now(void);
++
++static int gpu_probe_chan;
++extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
++extern void thread_deallocate(thread_t);
++
++static void
++sweet_gpu_probe_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	uint32_t delay = 30;
++
++	(void)arg; (void)wr;
++	PE_parse_boot_argn("adrenodelay", &delay, sizeof(delay));
++	if (delay > 600) {
++		delay = 600;
++	}
++	(void)tsleep(&gpu_probe_chan, PZERO, "adrenoprobe", hz * (int)delay);
++	printf("SWEET GPU: deferred probe starts (adrenodelay=%u)\n", delay);
++	sweet_gpu_probe_now();
++}
++
++void
+ sweet_gpu_probe(void)
++{
++	uint32_t delay = 0;
++	thread_t t = NULL;
++
++	PE_parse_boot_argn("adrenodelay", &delay, sizeof(delay));
++	if (delay != 0) {
++		if (kernel_thread_start(sweet_gpu_probe_thread, NULL, &t) == KERN_SUCCESS) {
++			thread_deallocate(t);
++			return;
++		}
++	}
++	sweet_gpu_probe_now();
++}
++
++static void
++sweet_gpu_probe_now(void)
+ {
+ 	int level = 0;
+ 	vm_offset_t gcc, cc, dbgc, misc, gmu, smmu, gpu, qf, db;
