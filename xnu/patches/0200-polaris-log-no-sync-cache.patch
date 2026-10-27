@@ -1,0 +1,23 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -1011,7 +1011,18 @@
+ 			error = ufs_write_blocks(base, 1);
+ 		}
+ 		if (!error) {
+-			error = ufs_sync_cache();
++			/*
++			 * polaris: SYNCHRONIZE CACHE(10) for the whole LUN can block
++			 * this UFS device for minutes, and the filesystem I/O of every
++			 * other thread waits behind it (launchd boot tasks stretched
++			 * from 26 s to 256 s). The periodic flush does not need it; the
++			 * reset and panic paths sync explicitly.
++			 */
++			uint32_t log_sync = 0;
++			PE_parse_boot_argn("sweetlogsync", &log_sync, sizeof(log_sync));
++			if (log_sync) {
++				error = ufs_sync_cache();
++			}
+ 		}
+ 		lck_mtx_unlock(&sweet_ufs_lock);
+ 		if (error) {
