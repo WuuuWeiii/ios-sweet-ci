@@ -26,6 +26,12 @@ xcrun --sdk iphoneos clang --target=arm64-apple-ios16.0 -isysroot "$SDK" -O2 \
     -Wl,-rpath,/usr/local/lib -Wl,-adhoc_codesign
 
 cp -f "$OUT/libOSMesa.8.dylib" "$OUT/libdrm.2.dylib" "$TESTS/"
+
+echo "== libhello.dylib (exec_inject load probe)"
+xcrun --sdk iphoneos clang --target=arm64-apple-ios16.0 -isysroot "$SDK" -O2 -dynamiclib \
+    -install_name /usr/local/lib/libhello.dylib \
+    -o "$TESTS/libhello.dylib" "$HERE/hello_inject.c" \
+    -Wl,-adhoc_codesign
 cp -f "$HERE"/org.sweet.iokittest.plist "$HERE"/org.sweet.osmesatest.plist "$TESTS/"
 chmod 755 "$TESTS/sweet-iokit-test" "$TESTS/osmesa_gputest"
 ls -l "$TESTS"
