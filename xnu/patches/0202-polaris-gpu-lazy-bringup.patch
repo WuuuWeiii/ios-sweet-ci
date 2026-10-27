@@ -1,13 +1,14 @@
 diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 --- a/bsd/dev/sweet_gpu.c
 +++ b/bsd/dev/sweet_gpu.c
-@@ -1949,9 +1949,20 @@
+@@ -1949,9 +1949,21 @@
  }
  
  /* devfs: one node, no per-open state, the GPU is a single system resource. */
 +extern void sweet_gpu_lazy_start(void);
 +extern void sweet_gpu_lazy_register(void);
 +static void gpu_dev_register(void);
++static void sweet_gpu_probe_now(void);
 +static bool gpu_node_created;
 +static bool gpu_published;
 +static bool gpu_lazy_pending;
@@ -22,7 +23,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  	int rc = gpu_live ? 0 : ENXIO;
  
  	/* The tool's console output can scroll away or go to a serial port we do not
-@@ -2027,9 +2038,43 @@
+@@ -2027,9 +2039,43 @@
  	.d_type   = 0,
  };
  
@@ -66,7 +67,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  	int major = cdevsw_add(-1, &sweet_gpu_cdevsw);
  
  	if (major < 0) {
-@@ -2601,6 +2646,14 @@
+@@ -2601,6 +2647,14 @@
  	uint32_t delay = 0;
  	thread_t t = NULL;
  
@@ -81,7 +82,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  	PE_parse_boot_argn("adrenodelay", &delay, sizeof(delay));
  	if (delay != 0) {
  		if (kernel_thread_start(sweet_gpu_probe_thread, NULL, &t) == KERN_SUCCESS) {
-@@ -3470,7 +3523,10 @@
+@@ -3470,7 +3524,10 @@
  									    gpu_cp_wptr);
  									(void)gpu_abi_test();
  									gpu_dev_register();
