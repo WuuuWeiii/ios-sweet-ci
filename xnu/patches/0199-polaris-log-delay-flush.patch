@@ -1,31 +1,31 @@
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -981,6 +981,9 @@
+@@ -955,6 +955,11 @@
+ 	uint32_t dbg = 0, reset_after = 0, shot_after = 0;
+ 	uint32_t shot_iv = 300, shot_n = 4, shot_taken = 0;
+ 	uint64_t reset_deadline = 0, shot_deadline = 0;
++	uint32_t log_delay = 90;	/* polaris: no raw UFS writes during the boot mounts */
++	PE_parse_boot_argn("sweetlogdelay", &log_delay, sizeof(log_delay));
++	if (log_delay > 600) {
++		log_delay = 600;
++	}
+ 	bool shot_done = false;
+ 	PE_parse_boot_argn("ufsdbg", &dbg, sizeof(dbg));
+ 	PE_parse_boot_argn("sweetfbshot", &shot_after, sizeof(shot_after));
+@@ -981,6 +986,15 @@
  
  	printf("SWEET LOG: console log to the last %u KiB of the partition (block 0x%llx)\n",
  	    SWEET_LOG_BLOCKS * UFS_BLOCK >> 10, base);
++	/*
++	 * polaris: a raw log flush that overlaps the boot mounts makes
++	 * /private/var fail with GetMasterBlock EBUSY and the boot then stalls in
++	 * mobile_obliterator. The ring keeps the early log; the panic path dumps it
++	 * regardless.
++	 */
 +	if (log_delay) {
 +		(void)tsleep(&sweet_log_chan, PZERO, "sweetlogd", hz * (int)log_delay);
 +	}
  	for (;;) {
  		(void)tsleep(&sweet_log_chan, PZERO, "sweetlog", hz * (int)sweet_log_secs);
  		uint64_t total = os_atomic_load(&sweet_log_total, relaxed);
-@@ -1056,6 +1059,17 @@
- 	if (sweet_log_secs == 0 || sweet_log_secs > 60) {
- 		sweet_log_secs = SWEET_LOG_SECS;
- 	}
-+	/*
-+	 * polaris: do not touch the UFS controller with raw log writes while the
-+	 * boot mounts are in flight (/private/var mount fails with EBUSY and the
-+	 * boot stalls). The ring buffer keeps the early log; it is flushed later,
-+	 * and the panic path dumps it regardless.
-+	 */
-+	uint32_t log_delay = 90;
-+	PE_parse_boot_argn("sweetlogdelay", &log_delay, sizeof(log_delay));
-+	if (log_delay > 600) {
-+		log_delay = 600;
-+	}
- 	if (kernel_thread_start(sweet_log_thread, NULL, &thread) == KERN_SUCCESS) {
- 		thread_deallocate(thread);
- 	}
