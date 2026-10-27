@@ -1,0 +1,32 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1957,12 +1957,20 @@
+ static bool gpu_published;
+ static bool gpu_lazy_pending;
+ static bool gpu_lazy_started;
++static int gpu_lazy_chan;
++static void sweet_gpu_probe_now(void);
+ static int
+ sweet_gpu_dev_open(dev_t dev, int flags, int devtype, struct proc *p)
+ {
+ 	/* lazy mode: the first client runs the hardware bring-up, not the boot */
+ 	if (!gpu_live && gpu_lazy_pending) {
+ 		sweet_gpu_lazy_start();
++	}
++	/* another client may be running the bring-up: wait for it to finish */
++	if (!gpu_live && gpu_lazy_started) {
++		for (int i = 0; i < 1200 && !gpu_live && gpu_lazy_started; i++) {
++			(void)tsleep(&gpu_lazy_chan, PZERO, "gpuwait", hz / 10);
++		}
+ 	}
+ 	int rc = gpu_live ? 0 : ENXIO;
+ 
+@@ -2055,6 +2063,7 @@
+ 	printf("SWEET GPU: lazy mode: hardware bring-up from the first client\n");
+ 	sweet_gpu_probe_now();
+ 	printf("SWEET GPU: lazy mode: bring-up returned, live=%d\n", gpu_live ? 1 : 0);
++	wakeup(&gpu_lazy_chan);
+ }
+ 
+ void
