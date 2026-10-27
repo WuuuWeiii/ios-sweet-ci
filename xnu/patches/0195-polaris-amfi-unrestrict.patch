@@ -1,0 +1,17 @@
+diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -264,6 +264,13 @@
+ {
+ 	mount_t mp = vnode_mount(vp);
+ 	*cs_flags |= CS_SIGNED;
++	/*
++	 * polaris: the AMFI stand-in accepts every signed binary on the root volume, so
++	 * also clear the flags that would make dyld ignore DYLD_* environment variables
++	 * (CS_RESTRICT, CS_HARD) and that would reject inserted third-party dylibs
++	 * (CS_REQUIRE_LV, library validation).
++	 */
++	*cs_flags &= ~(CS_RESTRICT | CS_HARD | CS_REQUIRE_LV);
+ 	if (mp != NULL && (vfs_flags(mp) & MNT_ROOTFS)) {
+ 		*cs_flags |= CS_PLATFORM_BINARY;
+ 	}
