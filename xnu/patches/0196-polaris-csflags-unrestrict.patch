@@ -1,0 +1,20 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7506,6 +7506,16 @@
+ 	 * ones for the process that is being successfully
+ 	 * loaded
+ 	 */
++#if defined(SWEET)
++	/*
++	 * polaris: the AMFI stand-in accepts every signed binary on the root
++	 * volume, so the Apple signature's restriction bits only have
++	 * downsides here: CS_RESTRICT/CS_HARD make dyld ignore DYLD_* (the
++	 * injected library in DYLD_INSERT_LIBRARIES) and CS_REQUIRE_LV would
++	 * make it reject our adhoc-signed dylibs. Clear them.
++	 */
++	imgp->ip_csflags &= ~(CS_RESTRICT | CS_HARD | CS_REQUIRE_LV | CS_FORCED_LV);
++#endif
+ 	proc_lock(p);
+ 	proc_csflags_update(p, imgp->ip_csflags);
+ 	proc_unlock(p);
