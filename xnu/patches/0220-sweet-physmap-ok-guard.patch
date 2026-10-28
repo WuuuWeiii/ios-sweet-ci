@@ -1,0 +1,64 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -381,6 +381,18 @@
+ 		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size);
+ 	}
+ 	return pa - gPhysBase + gVirtBase;
++}
++
++/* Can this physical address be reached through the kernel physmap? */
++boolean_t
++sweet_physmap_ok(pmap_paddr_t pa)
++{
++	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
++		if ((pa >= ptov_table[i].pa) && (pa < (ptov_table[i].pa + ptov_table[i].len))) {
++			return TRUE;
++		}
++	}
++	return !__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size));
+ }
+ 
+ vm_map_address_t
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6865,10 +6865,27 @@
+  * Invalidates all of the instruction cache on a physical page and
+  * pushes any dirty data from the data cache for the same physical page
+  */
++extern boolean_t sweet_physmap_ok(pmap_paddr_t pa);
++
++static void
++sweet_skip_phys_sync(pmap_paddr_t pa, const char *who)
++{
++	static int warned;
++	if (!warned) {
++		warned = 1;
++		printf("SWEET PMAP: %s skipping out-of-physmap PA 0x%llx\n", who,
++		    (unsigned long long)pa);
++	}
++}
++
+ void
+ pmap_sync_page_data_phys(
+ 	ppnum_t pp)
+ {
++	if (!sweet_physmap_ok((pmap_paddr_t)pp << PAGE_SHIFT)) {
++		sweet_skip_phys_sync((pmap_paddr_t)pp << PAGE_SHIFT, __func__);
++		return;
++	}
+ 	cache_sync_page(pp);
+ }
+ 
+@@ -6881,6 +6898,10 @@
+ pmap_sync_page_attributes_phys(
+ 	ppnum_t pp)
+ {
++	if (!sweet_physmap_ok((pmap_paddr_t)pp << PAGE_SHIFT)) {
++		sweet_skip_phys_sync((pmap_paddr_t)pp << PAGE_SHIFT, __func__);
++		return;
++	}
+ 	flush_dcache((vm_offset_t) (pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
+ }
+ 
