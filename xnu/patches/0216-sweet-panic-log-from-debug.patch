@@ -1,0 +1,56 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -871,6 +871,28 @@
+ 	}
+ }
+ 
++/* Format the panic message into the console ring so our oops dump carries the reason. */
++void
++sweet_dbg_panic_log(const char *fmt, va_list *args)
++{
++	char buf[512];
++	int n;
++
++	if (fmt == NULL || args == NULL) {
++		return;
++	}
++	n = vsnprintf(buf, sizeof(buf), fmt, *args);
++	if (n <= 0) {
++		return;
++	}
++	if (n > (int)sizeof(buf) - 1) {
++		n = (int)sizeof(buf) - 1;
++	}
++	sweet_log_append("\nSWEET PANIC: ", 14);
++	sweet_log_append(buf, n);
++	sweet_log_append("\n", 1);
++}
++
+ /* Called from sweet_early_panic(); must not rely on other CPUs or locks. */
+ void
+ sweet_dbg_panic_dump(void)
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1079,13 +1079,16 @@
+ 
+ #if defined(SWEET)
+ 	/*
+-	 * Unattended testing: with boot-arg ufsdbg=1 copy the console ring (it
+-	 * holds the initproc CRASH register/backtrace lines) to the recovery
+-	 * mailbox and reset the SoC.  Must run this early: the panic halts the
+-	 * other CPUs, so a timer thread can no longer do it.
++	 * Put the panic message into the console ring first, so the oops dump below carries
++	 * the reason. Then copy the ring to the recovery mailbox and reset the SoC. Must run
++	 * this early: the panic halts the other CPUs, so a timer thread can no longer do it.
+ 	 */
+ 	{
+ 		extern void sweet_dbg_panic_dump(void) __attribute__((weak));
++		extern void sweet_dbg_panic_log(const char *fmt, va_list *args) __attribute__((weak));
++		if (sweet_dbg_panic_log != 0) {
++			sweet_dbg_panic_log(panic_format_str, panic_args);
++		}
+ 		if (sweet_dbg_panic_dump != 0) {
+ 			sweet_dbg_panic_dump();
+ 		}
