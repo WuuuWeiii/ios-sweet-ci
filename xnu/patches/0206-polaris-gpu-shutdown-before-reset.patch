@@ -1,0 +1,89 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2097,6 +2097,60 @@
+ 	printf("SWEET GPU: lazy mode: /dev/sweetgpu registered, SweetAdreno630 deferred\n");
+ }
+ 
++static vm_offset_t g_saved_gmu;
++static vm_offset_t g_saved_gpucc;
++
++/*
++ * polaris: leave the GPU slumbering and in reset before an auto-reset, like the
++ * non-kept-up path of the probe does; otherwise the hardware state survives the SoC
++ * reset and later boots become far slower.
++ */
++void
++sweet_gpu_shutdown(void)
++{
++	if (!gpu_live) {
++		return;
++	}
++	printf("SWEET GPU: shutting the GPU down before the reset\n");
++	if (g_saved_gmu != 0) {
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_POWER_COUNTER, 0);
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_GX_SPTPRAC_POWER, 0x778001u);
++		for (int i = 0; i < 200; i++) {
++			if (gpu_rd_quiet(g_saved_gmu, GPU_GMU_SPTPRAC_STATUS) & 0x4u) {
++				break;
++			}
++			gpu_wait_ms(1);
++		}
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_BOOT_SLUMBER, 1);
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_HOST2GMU_SET, 1u << (GPU_OOB_BOOT_SLUMBER + 16));
++		for (int i = 0; i < 200; i++) {
++			if (gpu_rd_quiet(g_saved_gmu, GPU_GMU_GMU2HOST_INFO) &
++			    (1u << (GPU_OOB_BOOT_SLUMBER + 24))) {
++				break;
++			}
++			gpu_wait_ms(1);
++		}
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_GMU2HOST_CLR, 1u << (GPU_OOB_BOOT_SLUMBER + 24));
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_AO_AHB_FENCE, 0);
++		gpu_wr_quiet(g_saved_gmu, GPU_GMU_SYSRESET, 1);
++		gpu_wait_ms(10);
++	}
++	if (g_saved_gpucc != 0) {
++		uint32_t gx = gpu_rd_quiet(g_saved_gpucc, GPUCC_GX_GDSCR);
++		gpu_wr_quiet(g_saved_gpucc, GPUCC_GX_GDSCR, gx | GDSC_SW_COLLAPSE);
++		for (int i = 0; i < 200; i++) {
++			if (!(gpu_rd_quiet(g_saved_gpucc, GPUCC_GX_GDSCR) & GDSC_POWER_ON)) {
++				break;
++			}
++			gpu_wait_ms(1);
++		}
++		printf("SWEET GPU: gx_gdscr after off = %#x\n",
++		    gpu_rd_quiet(g_saved_gpucc, GPUCC_GX_GDSCR));
++	}
++	gpu_live = false;
++	printf("SWEET GPU: GPU shut down for the reset\n");
++}
++
+ static void
+ gpu_dev_register(void)
+ {
+@@ -3546,6 +3600,8 @@
+ 									gpu_kept_up = true;
+ 									gpu_blob = g;
+ 									gpu_core = gpu;
++									g_saved_gmu = gmu;
++									g_saved_gpucc = cc;
+ 									gpu_live = true;
+ 									printf("SWEET GPU: GPU KEPT UP: GMU live, OOB gpu held, "
+ 									    "zap authenticated, ring live at wptr %u\n",
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -1035,6 +1035,12 @@
+ 			if (reset_deadline && mach_absolute_time() > reset_deadline) {
+ 				printf("SWEET DBG: auto reset after %u s\n", reset_after);
+ 				sweet_dbg_dump();
++				{
++					extern void sweet_gpu_shutdown(void) __attribute__((weak));
++					if (sweet_gpu_shutdown != 0) {
++						sweet_gpu_shutdown();
++					}
++				}
+ 				(void)ufs_sync_cache();
+ 				sweet_psci_system_reset();
+ 			}
