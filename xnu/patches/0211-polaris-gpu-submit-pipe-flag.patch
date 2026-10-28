@@ -1,0 +1,17 @@
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -515,7 +515,12 @@
+ 	if (r->nr_bos == 0 || r->nr_bos > SUBMIT_BOS_MAX || r->nr_cmds == 0 || r->nr_cmds > SUBMIT_CMDS_MAX) {
+ 		return kIOReturnBadArgument;
+ 	}
+-	if ((r->flags & ~SWEET_MSM_SUBMIT_NO_IMPLICIT) != 0 || r->nr_in_syncobjs != 0 || r->nr_out_syncobjs != 0 ||
++	/*
++	 * Mesa/freedreno passes flags = msm_pipe->pipe = MSM_PIPE_3D0 (0x10), plus
++	 * MSM_SUBMIT_NO_IMPLICIT when implicit sync is off. The 3D ring is the only pipe we
++	 * have, so accept those two bits; fence-fd/syncobj flags stay rejected.
++	 */
++	if ((r->flags & ~(uint32_t)(SWEET_MSM_SUBMIT_NO_IMPLICIT | 0x10u)) != 0 || r->nr_in_syncobjs != 0 || r->nr_out_syncobjs != 0 ||
+ 	    r->in_syncobjs != 0 || r->out_syncobjs != 0 || (r->queueid >= QUEUE_IDS) ||
+ 	    (r->queueid != 0 && !(fQueues & (1ull << r->queueid)))) {
+ 		return kIOReturnUnsupported;
