@@ -1,0 +1,76 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2126,6 +2126,15 @@
+ {
+ 	gpu_lazy_pending = true;
+ 	gpu_dev_register();
++	/* 0223: publish the IOKit service now, so clients can open it while the bring-up runs */
++	{
++		extern void SweetAdrenoPublish(void);
++		if (!gpu_published) {
++			gpu_published = true;
++			SweetAdrenoPublish();
++			printf("SWEET GPU: lazy mode: SweetAdreno630 published early (bring-up deferred)\n");
++		}
++	}
+ 	/*
+ 	 * SweetAdrenoPublish() is a no-op until sweet_gpu_ready(); leave
+ 	 * gpu_published false so the kept-up branch publishes the service after the
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -142,9 +142,7 @@
+ {
+ 	uint32_t agx = 0;
+ 
+-	if (!sweet_gpu_ready()) {
+-		return;
+-	}
++	/* 0223: may be called before the lazy bring-up has run; the client methods wait. */
+ 	if (gAdrenoLock == NULL) {
+ 		gAdrenoLock = IOLockAlloc();
+ 	}
+@@ -178,7 +176,9 @@
+ 	if (!IOUserClient::initWithTask(owningTask, securityID, type)) {
+ 		return false;
+ 	}
+-	if (!sweet_gpu_ready() || gAdrenoLock == NULL) {
++	/* 0223: the service is published before the lazy bring-up; readiness is waited for
++	 * in externalMethod(). */
++	if (gAdrenoLock == NULL) {
+ 		return false;
+ 	}
+ 	fTask = owningTask;
+@@ -792,6 +792,22 @@
+ 	return kIOReturnSuccess;
+ }
+ 
++extern "C" void sweet_gpu_lazy_start(void);
++
++/* 0223: kick the lazy bring-up (if it has not run yet) and wait for the GPU to be live. */
++static bool
++sweet_wait_gpu_ready(void)
++{
++	if (sweet_gpu_ready()) {
++		return true;
++	}
++	sweet_gpu_lazy_start();
++	for (int i = 0; i < 18000 && !sweet_gpu_ready(); i++) {
++		IOSleep(10);             /* up to 180 s: level-9 bring-up is slow */
++	}
++	return sweet_gpu_ready();
++}
++
+ IOReturn
+ SweetAdrenoUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
+     __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target, __unused void *reference)
+@@ -824,7 +840,7 @@
+ 	if (in != 0) {
+ 		memcpy(&r, args->structureInput, in);
+ 	}
+-	if (!sweet_gpu_ready() && selector != SWEET_GPU_SEL_INFO) {
++	if (!sweet_gpu_ready() && selector != SWEET_GPU_SEL_INFO && !sweet_wait_gpu_ready()) {
+ 		return kIOReturnNotReady;
+ 	}
+ 
