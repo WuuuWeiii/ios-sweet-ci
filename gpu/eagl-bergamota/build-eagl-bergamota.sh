@@ -23,9 +23,8 @@ $CC -dynamiclib -o "$BOUT/OpenGLES.framework/OpenGLES" "$BOUT"/obj/*.o \
     -Wl,-not_for_dyld_shared_cache -compatibility_version 1.0.0 -current_version 1.0.0 \
     -framework Foundation -framework CoreFoundation -framework CoreGraphics -framework IOSurface \
     "$BOUT/libOSMesa.8.dylib" -Wl,-rpath,@loader_path/.. -Wl,-undefined,error
-$CC -O2 -Wall "$HERE/launch/bgl-launch.c" -o "$BOUT/bgl-launch" \
-    -framework Foundation -framework CoreFoundation 2>/dev/null || \
-  $CC -O2 -Wall "$HERE/launch/bgl-launch.c" -o "$BOUT/bgl-launch"
+$CC -O2 -Wall -DBGL_REAL_PATH='"/usr/libexec/backboardd.real"' "$HERE/launch/bgl-launch.c" \
+    -o "$BOUT/bgl-launch" -framework Foundation -framework CoreFoundation
 for f in "$BOUT/OpenGLES.framework/OpenGLES" "$BOUT/bgl-launch"; do
   codesign -f -s - "$f" 2>/dev/null || true
 done
