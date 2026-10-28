@@ -1,0 +1,40 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2099,6 +2099,7 @@
+ 
+ static vm_offset_t g_saved_gmu;
+ static vm_offset_t g_saved_gpucc;
++static int g_gpu_forced_level;
+ 
+ /*
+  * polaris: leave the GPU slumbering and in reset before an auto-reset, like the
+@@ -2771,8 +2772,15 @@
+ 
+ 	{
+ 		uint32_t lazy = 0;
++		uint32_t lvl = 0;
++
+ 		PE_parse_boot_argn("adrenolazy", &lazy, sizeof(lazy));
+ 		if (lazy) {
++			PE_parse_boot_argn("adreno", &lvl, sizeof(lvl));
++			if (lazy >= 2 && lvl == 0) {
++				g_gpu_forced_level = 9;
++				printf("SWEET GPU: adrenolazy=2: bring-up will use level 9\n");
++			}
+ 			sweet_gpu_lazy_register();
+ 			return;
+ 		}
+@@ -2791,6 +2799,12 @@
+ sweet_gpu_probe_now(void)
+ {
+ 	int level = 0;
++
++	if (g_gpu_forced_level != 0) {
++		level = g_gpu_forced_level;
++	} else {
++		(void)PE_parse_boot_argn("adreno", &level, sizeof(level));
++	}
+ 	vm_offset_t gcc, cc, dbgc, misc, gmu, smmu, gpu, qf, db;
+ 	vm_offset_t g = 0;               /* the GMU memory blob (sweetfw1) */
+ 	uint64_t gmem_pa = 0;           /* its physical address, 64-bit */
