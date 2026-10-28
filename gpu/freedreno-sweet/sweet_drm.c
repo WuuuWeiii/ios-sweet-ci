@@ -87,6 +87,13 @@ klog_drm(const char *fmt, ...)
 	(void)ioctl(g_klog_fd, SWEET_GPU_IOCTL_LOG_K, &l);
 	pthread_mutex_unlock(&g_klog_lock);
 }
+
+/* Exported for the injected EAGL shim: write a line into the kernel's persistent log. */
+void
+sweet_klog(const char *msg)
+{
+	klog_drm("SWEETSHIM: %s", msg ? msg : "(null)");
+}
 static io_connect_t g_conn;
 static dev_t g_null_rdev;
 static int g_trace;
