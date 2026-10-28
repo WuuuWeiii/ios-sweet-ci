@@ -1,0 +1,65 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -1093,6 +1093,35 @@
+ 	}
+ }
+ 
++/* Timed 1 MiB raw reads: the sampler prints these to tell slow I/O from slow CPU. */
++void
++sweet_ufs_cal(const char *when)
++{
++	if (!su.ready || !su.writable || su.nblocks < 2048) {
++		return;
++	}
++	uint64_t ns1 = 0, ns2 = 0;
++	for (int i = 0; i < 2; i++) {
++		lck_mtx_lock(&sweet_ufs_lock);
++		uint64_t t0 = mach_absolute_time();
++		int err = ufs_read_blocks(su.first_block + 1024 + (uint64_t)i * 256, 256);
++		uint64_t t1 = mach_absolute_time();
++		lck_mtx_unlock(&sweet_ufs_lock);
++		uint64_t ns = 0;
++		absolutetime_to_nanoseconds(t1 - t0, &ns);
++		if (i == 0) {
++			ns1 = ns;
++		} else {
++			ns2 = ns;
++		}
++		if (err != 0) {
++			printf("SWEET IOCAL: read error %d\n", err);
++		}
++	}
++	printf("SWEET IOCAL: %s 1MiB read %llu ms, again %llu ms\n", when,
++	    ns1 / 1000000ull, ns2 / 1000000ull);
++}
++
+ static void
+ sweet_log_start(void)
+ {
+diff --git a/bsd/dev/sweet_sample.c b/bsd/dev/sweet_sample.c
+--- a/bsd/dev/sweet_sample.c
++++ b/bsd/dev/sweet_sample.c
+@@ -77,10 +77,14 @@
+ 	printf("SWEET CAL: %s 16M iters %llu ms (acc %llx)\n", when, ns / 1000000ull, (unsigned long long)acc);
+ }
+ 
++extern void sweet_ufs_cal(const char *when);
++
++
+ static void
+ sweet_sample_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+ 	sweet_cpu_cal("start");
++	sweet_ufs_cal("start");
+ 	static int chan;
+ 	if (!PE_parse_boot_argn("sweetsample", sweet_sample_names, sizeof(sweet_sample_names))) {
+ 		strlcpy(sweet_sample_names, "SpringBoard,backboardd", sizeof(sweet_sample_names));
+@@ -90,6 +94,7 @@
+ 	}
+ 	(void)tsleep(&chan, PZERO, "sweetsmp", 90 * hz);
+ 	sweet_cpu_cal("after90s");
++	sweet_ufs_cal("after90s");
+ 	for (int i = 0; i < 40; i++) {
+ 		printf("SMP --- sample %d\n", i);
+ 		proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, NULL, NULL);
