@@ -1,0 +1,17 @@
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -637,6 +637,13 @@
+ 				    (unsigned)p[i + 4], (unsigned)p[i + 5], (unsigned)p[i + 6], (unsigned)p[i + 7]);
+ 			}
+ 		}
++		/* 0226: sweetibcut=<dwords> truncates the first command buffer (hang bisect). */
++		uint32_t ibcut = 0;
++		(void)PE_parse_boot_argn("sweetibcut", &ibcut, sizeof(ibcut));
++		if (ibcut != 0 && ibn[0] > ibcut) {
++			printf("SWEET GPU: IBCUT %u -> %u dwords\n", ibn[0], ibcut);
++			ibn[0] = ibcut;
++		}
+ 		uint32_t fence = sweet_gpu_submit(ib, ibn, r->nr_cmds);
+ 		if (fence == 0) {
+ 			ret = kIOReturnNoResources;
