@@ -1,0 +1,12 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2831,8 +2831,6 @@
+ 	vm_offset_t gcc, cc, dbgc, misc, gmu, smmu, gpu, qf, db;
+ 	vm_offset_t g = 0;               /* the GMU memory blob (sweetfw1) */
+ 	uint64_t gmem_pa = 0;           /* its physical address, 64-bit */
+-
+-	(void)PE_parse_boot_argn("adreno", &level, sizeof(level));
+ 	if (level < 1) {
+ 		printf("SWEET GPU: probe off (adreno=1 enables it)\n");
+ 		return;
