@@ -1,0 +1,38 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -698,14 +698,26 @@
+ 	sweet_touch_init();
+ 	polaris_touch_diag();
+ 	polaris_touch_i2c_init();
+-	polaris_gpu_diag();
+-	polaris_gpu_init();
+-	polaris_gpu_probe();
+-	sweet_gpu_probe();	/* polaris GPU (fajita driver) */
+-	polaris_gpu_power();
+-	polaris_gpu_gmu();
+-	polaris_gpu_smmu();
+-	polaris_gpu_cm3();
++	{
++		uint32_t gpu_lazy = 0;
++
++		PE_parse_boot_argn("adrenolazy", &gpu_lazy, sizeof(gpu_lazy));
++		if (!gpu_lazy) {
++			polaris_gpu_diag();
++			polaris_gpu_init();
++			polaris_gpu_probe();
++		}
++		/* the fajita driver; in lazy mode it only registers the service here */
++		sweet_gpu_probe();
++		if (!gpu_lazy) {
++			polaris_gpu_power();
++			polaris_gpu_gmu();
++			polaris_gpu_smmu();
++			polaris_gpu_cm3();
++		} else {
++			printf("SWEET GPU: legacy polaris bring-up skipped (adrenolazy=1)\n");
++		}
++	}
+ 	sweet_usb_probe();
+ 	return 0;
+ }
