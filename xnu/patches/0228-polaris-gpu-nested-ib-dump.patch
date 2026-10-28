@@ -1,0 +1,46 @@
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -636,6 +636,42 @@
+ 				    (unsigned)p[i], (unsigned)p[i + 1], (unsigned)p[i + 2], (unsigned)p[i + 3],
+ 				    (unsigned)p[i + 4], (unsigned)p[i + 5], (unsigned)p[i + 6], (unsigned)p[i + 7]);
+ 			}
++			/* 0228: also dump the indirect buffers the main IB references. */
++			for (uint32_t i = 0; i + 3 < nd; ) {
++				uint32_t w = p[i];
++				if ((w >> 28) == 7 && ((w >> 24) & 0xF) == 0) {
++					uint32_t op = (w >> 16) & 0x7f;
++					uint32_t cnt = w & 0x3fff;
++					if ((op == 0x3f || op == 0x37 || op == 0x57) && cnt >= 3 && i + 3 < nd) {
++						uint64_t addr = (uint64_t)p[i + 1] | ((uint64_t)p[i + 2] << 32);
++						uint32_t words = p[i + 3];
++						printf("SWEET GPU: NIBA iova %#llx words %u\n",
++						    (unsigned long long)addr, words);
++						for (uint32_t b = 0; b < r->nr_bos; b++) {
++							struct sweet_gem *t = objs[b];
++							if (t != NULL && t->kva != NULL && addr >= t->iova && addr < t->iova + t->size) {
++								uint32_t off = (uint32_t)(addr - t->iova);
++								uint32_t n2 = words > 256 ? 256 : words;
++								if ((uint64_t)off + (uint64_t)n2 * 4 > t->size) {
++									n2 = (uint32_t)((t->size - off) / 4);
++								}
++								volatile uint32_t *q = (volatile uint32_t *)(t->kva + off);
++								for (uint32_t k = 0; k < n2; k += 8) {
++									printf("SWEET GPU: NIB %03u: %08x %08x %08x %08x %08x %08x %08x %08x\n", k,
++									    (unsigned)q[k], (unsigned)q[k + 1], (unsigned)q[k + 2], (unsigned)q[k + 3],
++									    (unsigned)q[k + 4], (unsigned)q[k + 5], (unsigned)q[k + 6], (unsigned)q[k + 7]);
++								}
++								break;
++							}
++						}
++					}
++					i += 1 + cnt;
++				} else if ((w >> 28) == 4) {
++					i += 1 + (w & 0x7f);
++				} else {
++					i += 1;
++				}
++			}
+ 		}
+ 		/* 0226: sweetibcut=<dwords> truncates the first command buffer (hang bisect). */
+ 		uint32_t ibcut = 0;
