@@ -1,0 +1,56 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -364,14 +364,24 @@
+ #define GPU_BO_MAX_BYTES       0x100000u
+ #define GPU_ARENA_BYTES        0x100000u   /* the sweetfw2 blob: 1 MiB */
+ /* stage 8f: the C surface the IOKit user client calls */
+-#define GPU_PARAM_GPU_ID        1u   /* msm_param / MSM_PARAM_* */
+-#define GPU_PARAM_CHIP_ID       2u
+-#define GPU_PARAM_GMEM_SIZE     3u
+-#define GPU_PARAM_MAX_FREQ      4u
+-#define GPU_PARAM_TIMESTAMP     5u
+-#define GPU_PARAM_GMEM_BASE     6u
+-#define GPU_PARAM_VA_START      7u
+-#define GPU_PARAM_VA_SIZE       8u
++/* Linux msm uapi numbering (drm-uapi/msm_drm.h); Mesa/freedreno sends these numbers. */
++#define GPU_PARAM_GPU_ID          0x01u
++#define GPU_PARAM_GMEM_SIZE       0x02u
++#define GPU_PARAM_CHIP_ID         0x03u
++#define GPU_PARAM_MAX_FREQ        0x04u
++#define GPU_PARAM_TIMESTAMP       0x05u
++#define GPU_PARAM_GMEM_BASE       0x06u
++#define GPU_PARAM_PRIORITIES      0x07u
++#define GPU_PARAM_PP_PGTABLE      0x08u
++#define GPU_PARAM_FAULTS          0x09u
++#define GPU_PARAM_SUSPENDS        0x0au
++#define GPU_PARAM_SYSPROF         0x0bu
++#define GPU_PARAM_VA_START        0x0eu
++#define GPU_PARAM_VA_SIZE         0x0fu
++#define GPU_PARAM_HIGHEST_BANK_BIT 0x10u
++#define GPU_PARAM_RAYTRACING      0x11u
++#define GPU_PARAM_UBWC_SWIZZLE    0x12u
++#define GPU_PARAM_MACROTILE_MODE  0x13u
+ #define GPU_EXTENT_MAX          8u
+ 
+ struct gpu_extent {
+@@ -1488,6 +1498,19 @@
+ 	case GPU_PARAM_VA_SIZE:
+ 		*value = GPU_VA_BYTES;
+ 		break;
++	case GPU_PARAM_PRIORITIES:
++		*value = 1;              /* one submitqueue priority level */
++		break;
++	case GPU_PARAM_PP_PGTABLE:
++	case GPU_PARAM_FAULTS:
++	case GPU_PARAM_SUSPENDS:
++	case GPU_PARAM_SYSPROF:
++	case GPU_PARAM_HIGHEST_BANK_BIT:
++	case GPU_PARAM_RAYTRACING:
++	case GPU_PARAM_MACROTILE_MODE:
++		*value = 0;              /* optional; a safe default is fine */
++		break;
++	/* GPU_PARAM_UBWC_SWIZZLE: unsupported on purpose -> Mesa uses linear/tiled without UBWC */
+ 	default:
+ 		return false;
+ 	}
