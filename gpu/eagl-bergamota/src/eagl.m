@@ -1027,6 +1027,18 @@ void GLCSetProfilerStorage(void) {}
 #pragma GCC visibility pop
 
 #ifdef EAGL_INJECT
+#include <dlfcn.h>
+static void shim_klog(const char *msg) {
+    static void (*fn)(const char *);
+    static int tried;
+    if (!tried) {
+        tried = 1;
+        void *h = dlopen("/usr/local/lib/libdrm.2.dylib", RTLD_NOW | RTLD_GLOBAL);
+        if (!h) h = dlopen("/usr/local/lib/bergamota-gl/libdrm.2.dylib", RTLD_NOW | RTLD_GLOBAL);
+        if (h) fn = (void (*)(const char *))dlsym(h, "sweet_klog");
+    }
+    if (fn) fn(msg);
+}
 static int patch_class(Class ours, const char *realName) {
     Class real = objc_getClass(realName);
     if (!real || !ours) return 0;
@@ -1050,11 +1062,15 @@ static void try_patch(void) {
         patch_class(objc_getClass("BGEAGLContext"), "EAGLContext");
         patch_class(objc_getClass("BGEAGLSharegroup"), "EAGLSharegroup");
         done = 1;
+        shim_klog("EAGL inject: patched real EAGLContext/EAGLSharegroup methods");
     }
 }
 static void on_image(const struct mach_header *mh, intptr_t slide) { (void)mh; (void)slide; try_patch(); }
 __attribute__((constructor)) static void eagl_inject_patch(void) {
+    shim_klog("EAGL inject: constructor running");
     try_patch();
+    if (objc_getClass("BGEAGLContext") == Nil) shim_klog("EAGL inject: BGEAGLContext class MISSING");
+    if (objc_getClass("EAGLContext") == Nil) shim_klog("EAGL inject: real EAGLContext not loaded yet");
     _dyld_register_func_for_add_image(on_image);
 }
 #endif
