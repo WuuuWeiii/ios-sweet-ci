@@ -1,0 +1,28 @@
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -619,6 +619,24 @@
+ 		}
+ 	}
+ 	{
++		/* 0225: dump the first command buffer once, to decode a hung submit offline. */
++		static int ib_dumped;
++		if (!ib_dumped && r->nr_cmds >= 1 && cmds[0].size >= 4) {
++			struct sweet_gem *cb = objs[cmds[0].submit_idx];
++			uint32_t nd = cmds[0].size / 4;
++			ib_dumped = 1;
++			if (nd > 512) {
++				nd = 512;
++			}
++			printf("SWEET GPU: IBDUMP iova %#llx dwords %u\n",
++			    (unsigned long long)(cb->iova + cmds[0].submit_offset), (unsigned)cmds[0].size / 4);
++			volatile uint32_t *p = (volatile uint32_t *)(cb->kva + cmds[0].submit_offset);
++			for (uint32_t i = 0; i < nd; i += 8) {
++				printf("SWEET GPU: IB %03u: %08x %08x %08x %08x %08x %08x %08x %08x\n", i,
++				    (unsigned)p[i], (unsigned)p[i + 1], (unsigned)p[i + 2], (unsigned)p[i + 3],
++				    (unsigned)p[i + 4], (unsigned)p[i + 5], (unsigned)p[i + 6], (unsigned)p[i + 7]);
++			}
++		}
+ 		uint32_t fence = sweet_gpu_submit(ib, ibn, r->nr_cmds);
+ 		if (fence == 0) {
+ 			ret = kIOReturnNoResources;
