@@ -1,0 +1,24 @@
+name: m7sign
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: patch backboardd and sign it adhoc
+        run: |
+          set -euo pipefail
+          cd gpu/m7
+          ls -l
+          python3 inject-lc.py backboardd.stock backboardd.patched /usr/local/lib/bergamota-gl/OpenGLES.framework/OpenGLES
+          codesign -f -s - --timestamp=none backboardd.patched
+          codesign -dv --verbose=4 backboardd.patched 2>&1 | head -20
+          codesign --verify --verbose=2 backboardd.patched && echo VERIFY-OK
+          ls -l backboardd.patched
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backboardd-signed
+          path: gpu/m7/backboardd.patched
