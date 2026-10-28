@@ -1,0 +1,54 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2723,10 +2723,50 @@
+ 	sweet_gpu_probe_now();
+ }
+ 
++/*
++ * polaris: emergency power-down of a GPU an earlier boot left running.
++ */
++static void
++sweet_gpu_force_off(void)
++{
++	vm_offset_t cc = ml_io_map(GPU_CC, 0x9000);
++	vm_offset_t gmu = ml_io_map(GPU_GMU, 0x30000);
++
++	printf("SWEET GPU: force-off: putting GMU into reset and collapsing GX\n");
++	if (gmu != 0) {
++		gpu_wr_quiet(gmu, GPU_GMU_SYSRESET, 1);
++		gpu_wait_ms(10);
++		printf("SWEET GPU: force-off: gmu sysreset %#x\n", gpu_rd_quiet(gmu, GPU_GMU_SYSRESET));
++	}
++	if (cc != 0) {
++		uint32_t gx = gpu_rd_quiet(cc, GPUCC_GX_GDSCR);
++		uint32_t cx = gpu_rd_quiet(cc, GPUCC_CX_GDSCR);
++
++		printf("SWEET GPU: force-off: gx_gdscr %#x cx_gdscr %#x\n", gx, cx);
++		if (gx & GDSC_POWER_ON) {
++			gpu_wr_quiet(cc, GPUCC_GX_GDSCR, gx | GDSC_SW_COLLAPSE);
++			for (int i = 0; i < 200; i++) {
++				if (!(gpu_rd_quiet(cc, GPUCC_GX_GDSCR) & GDSC_POWER_ON)) {
++					break;
++				}
++				gpu_wait_ms(1);
++			}
++			printf("SWEET GPU: force-off: gx_gdscr now %#x\n", gpu_rd_quiet(cc, GPUCC_GX_GDSCR));
++		}
++	}
++}
++
+ void
+ sweet_gpu_probe(void)
+ {
++	uint32_t forceoff = 0;
+ 	uint32_t delay = 0;
++
++	PE_parse_boot_argn("adrenoforceoff", &forceoff, sizeof(forceoff));
++	if (forceoff) {
++		sweet_gpu_force_off();
++		return;
++	}
+ 	thread_t t = NULL;
+ 
+ 	{
