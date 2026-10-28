@@ -1,0 +1,57 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1954,6 +1954,8 @@
+ extern void sweet_gpu_lazy_register(void);
+ static void gpu_dev_register(void);
+ static void sweet_gpu_probe_now(void);
++extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
++extern void thread_deallocate(thread_t);
+ static bool gpu_node_created;
+ static bool gpu_published;
+ static bool gpu_lazy_pending;
+@@ -1968,7 +1970,7 @@
+ 	}
+ 	/* another client may be running the bring-up: wait for it to finish */
+ 	if (!gpu_live && gpu_lazy_started) {
+-		for (int i = 0; i < 1200 && !gpu_live && gpu_lazy_started; i++) {
++		for (int i = 0; i < 6000 && !gpu_live && gpu_lazy_started; i++) {
+ 			(void)tsleep(&gpu_lazy_chan, PZERO, "gpuwait", hz / 10);
+ 		}
+ 	}
+@@ -2052,17 +2054,33 @@
+  * polaris lazy mode (adrenolazy=1): the heavy bring-up runs from the first client that
+  * opens /dev/sweetgpu instead of from the boot path.
+  */
++static void
++sweet_gpu_lazy_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	(void)arg; (void)wr;
++	printf("SWEET GPU: lazy mode: kernel thread bring-up start\n");
++	sweet_gpu_probe_now();
++	printf("SWEET GPU: lazy mode: bring-up returned, live=%d\n", gpu_live ? 1 : 0);
++	wakeup(&gpu_lazy_chan);
++}
++
+ void
+ sweet_gpu_lazy_start(void)
+ {
++	thread_t t = NULL;
++
+ 	if (!gpu_lazy_pending || gpu_lazy_started) {
+ 		return;
+ 	}
+ 	gpu_lazy_started = true;
+ 	gpu_lazy_pending = false;
+-	printf("SWEET GPU: lazy mode: hardware bring-up from the first client\n");
++	printf("SWEET GPU: lazy mode: starting the bring-up thread (first client)\n");
++	if (kernel_thread_start(sweet_gpu_lazy_thread, NULL, &t) == KERN_SUCCESS) {
++		thread_deallocate(t);
++		return;
++	}
++	/* no thread: fall back to running it here */
+ 	sweet_gpu_probe_now();
+-	printf("SWEET GPU: lazy mode: bring-up returned, live=%d\n", gpu_live ? 1 : 0);
+ 	wakeup(&gpu_lazy_chan);
+ }
+ 
