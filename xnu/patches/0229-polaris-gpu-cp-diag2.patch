@@ -1,0 +1,19 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1841,6 +1841,15 @@
+ 		(void)first;
+ 		printf("SWEET GPU: SUBMITDIAG seq %u cnt %u idle ok rbbm %#x status1 %#x hw_fault %#x"
+ 		    " fence_slot %u ib0 %#x,%#x,%#x,%#x\n",
++		printf("SWEET GPU: CPDIAG int %#x protect %#x rptr %#x wptr %#x ib1 %#x/%#x ib2 %#x/%#x"
++		    " sqe_cntl %#x crash %#x\n",
++		    gpu_cp_rd(gpu_core, 0x208cu), gpu_cp_rd(gpu_core, 0x2090u),
++		    gpu_cp_rd(gpu_core, 0x2018u), gpu_cp_rd(gpu_core, 0x201cu),
++		    gpu_cp_rd(gpu_core, 0x24a0u), gpu_cp_rd(gpu_core, 0x250cu),
++		    gpu_cp_rd(gpu_core, 0x24acu), gpu_cp_rd(gpu_core, 0x2510u),
++		    gpu_cp_rd(gpu_core, 0x2020u), gpu_cp_rd(gpu_core, 0x240cu));
++		gpu_cp_wr(gpu_core, 0x2420u, 1);
++		printf("SWEET GPU: CPDIAG sqe_stat1 %#x\n", gpu_cp_rd(gpu_core, 0x2424u));
+ 		    gpu_cp_seq, count, gpu_cp_rd(gpu_core, A6XX_RBBM_STATUS),
+ 		    gpu_cp_rd(gpu_core, A6XX_CP_STATUS_1), gpu_cp_rd(gpu_core, A6XX_CP_HW_FAULT),
+ 		    *fence_slot,
