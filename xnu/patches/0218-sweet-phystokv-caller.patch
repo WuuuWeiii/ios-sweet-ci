@@ -1,0 +1,15 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -377,8 +377,9 @@
+ 		}
+ 	}
+ 	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
+-		panic("%s: illegal PA: 0x%llx; phys base 0x%llx, size 0x%llx", __func__,
+-		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size);
++		panic("%s: illegal PA: 0x%llx; phys base 0x%llx, size 0x%llx; caller %p %p", __func__,
++		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size,
++		    __builtin_return_address(0), __builtin_return_address(1));
+ 	}
+ 	return pa - gPhysBase + gVirtBase;
+ }
