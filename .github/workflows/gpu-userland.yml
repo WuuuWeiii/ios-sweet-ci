@@ -26,6 +26,12 @@ jobs:
           GPU_EAGL_WORK: ${{ runner.temp }}/gpu-eagl
         run: |
           bash gpu/eagl/build-eagl.sh
+      - name: Build Bergamota EAGL injection payload (M7)
+        env:
+          GPU_EAGL_WORK: ${{ runner.temp }}/gpu-eagl
+        run: |
+          bash gpu/eagl-bergamota/build-eagl-bergamota.sh
+
       - name: Build userspace GPU tests (IOKit + OSMesa)
         env:
           GPU_EAGL_WORK: ${{ runner.temp }}/gpu-eagl
@@ -37,4 +43,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gpu-userland
-          path: ${{ runner.temp }}/gpu-eagl/out/**
+          path: |
+            ${{ runner.temp }}/gpu-eagl/out/**
+            ${{ runner.temp }}/gpu-eagl/out-eagl/**
