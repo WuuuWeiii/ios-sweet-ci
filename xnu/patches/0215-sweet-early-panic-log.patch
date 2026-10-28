@@ -1,0 +1,44 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -129,6 +129,19 @@
+ 	sweet_early_putc('\n');
+ }
+ 
++/* Also mirror the panic text into the console ring so the oops dump (written next by
++ * sweet_dbg_panic_dump) tells us why the phone reset. */
++static char early_panic_buf[512];
++static unsigned int early_panic_len;
++
++static void
++sweet_early_panic_log_putc(char c)
++{
++	if (early_panic_len < sizeof(early_panic_buf) - 1) {
++		early_panic_buf[early_panic_len++] = c;
++	}
++}
++
+ void
+ sweet_early_panic(const char *fmt, va_list *args)
+ {
+@@ -142,6 +155,20 @@
+ 	_doprnt(fmt, &copy, sweet_early_putc, 16);
+ 	va_end(copy);
+ 	sweet_early_putc('\n');
++	/* Same text into the console ring (for the oops dump). */
++	{
++		extern void sweet_log_append(const char *c, int size) __attribute__((weak));
++		if (sweet_log_append != 0) {
++			va_list copy2;
++			va_copy(copy2, *args);
++			early_panic_len = 0;
++			_doprnt(fmt, &copy2, sweet_early_panic_log_putc, 16);
++			va_end(copy2);
++			sweet_log_append("\nSWEET PANIC: ", 14);
++			sweet_log_append(early_panic_buf, (int)early_panic_len);
++			sweet_log_append("\n", 1);
++		}
++	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 
+ 	/* With boot-arg ufsdbg=1, hand the console ring to the recovery
