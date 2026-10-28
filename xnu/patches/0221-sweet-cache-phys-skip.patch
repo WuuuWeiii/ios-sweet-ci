@@ -1,0 +1,59 @@
+diff --git a/osfmk/arm/caches.c b/osfmk/arm/caches.c
+--- a/osfmk/arm/caches.c
++++ b/osfmk/arm/caches.c
+@@ -57,6 +57,33 @@
+ 
+ TUNABLE(bool, up_style_idle_exit, "up_style_idle_exit", false);
+ 
++/*
++ * Cache maintenance for a physical address outside the kernel physmap is impossible
++ * (phystokv_range() panics). The GPU test image hit this with PA 0xa6fc000 while the
++ * phys base is 0x100000000; such pages are uncached/WC, where the maintenance is moot,
++ * so skip it and print the caller once.
++ */
++extern unsigned long gPhysBase, real_phys_size;
++
++static boolean_t
++sweet_cache_phys_ok(pmap_paddr_t pa)
++{
++	return !((pa < (pmap_paddr_t)gPhysBase) ||
++	    ((pa - (pmap_paddr_t)gPhysBase) >= (pmap_paddr_t)real_phys_size));
++}
++
++static void
++sweet_cache_phys_skip(pmap_paddr_t pa, const char *who)
++{
++	static int warned;
++	if (!warned) {
++		warned = 1;
++		printf("SWEET CACHE: %s skip PA 0x%llx caller %p\n", who,
++		    (unsigned long long)pa, __builtin_return_address(0));
++	}
++}
++
++
+ void
+ flush_dcache(
+ 	vm_offset_t addr,
+@@ -72,6 +99,10 @@
+ 		if (phys) {
+ 			count = length;
+ 			paddr = CAST_DOWN(pmap_paddr_t, addr);
++			if (!sweet_cache_phys_ok(paddr)) {
++				sweet_cache_phys_skip(paddr, __func__);
++				return;
++			}
+ 			vaddr = phystokv_range(paddr, &count);
+ 		} else {
+ 			paddr = kvtophys(addr);
+@@ -106,6 +137,10 @@
+ 		if (phys) {
+ 			count = length;
+ 			paddr = CAST_DOWN(pmap_paddr_t, addr);
++			if (!sweet_cache_phys_ok(paddr)) {
++				sweet_cache_phys_skip(paddr, __func__);
++				return;
++			}
+ 			vaddr = phystokv_range(paddr, &count);
+ 		} else {
+ 			paddr = kvtophys(addr);
