@@ -1,0 +1,17 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2512,6 +2512,13 @@
+ 	 * lazy bring-up has made the GPU live.
+ 	 */
+ 	printf("SWEET GPU: lazy mode: /dev/sweetgpu registered, SweetAdreno630 deferred\n");
++	/* 0235: sweetlazyboot=1 starts the bring-up from the boot path (fast CP experiments). */
++	{
++		int lazyboot = 0;
++		if (PE_parse_boot_argn("sweetlazyboot", &lazyboot, sizeof(lazyboot)) && lazyboot) {
++			sweet_gpu_lazy_start();
++		}
++	}
+ }
+ 
+ static vm_offset_t g_saved_gmu;
