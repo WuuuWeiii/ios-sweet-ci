@@ -1,0 +1,20 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -4118,12 +4118,11 @@
+ 										}
+ 									}
+ 									/* 0238: is the CP really out of secure mode? */
+-									printf("SWEET GPU: SECDIAG misc_cntl %#x status1 %#x int %#x protect %#x"
+-									    " trust_cntl %#x tsb_hi %#x\n",
++									/* 0242: only the four CP block registers here: CPU reads of
++									 * RBBM_SECVID_* stall the interconnect on this hypervisor. */
++									printf("SWEET GPU: SECDIAG misc_cntl %#x status1 %#x int %#x protect %#x\n",
+ 									    gpu_cp_rd(gpu, 0x2100u), gpu_cp_rd(gpu, 0x2094u),
+-									    gpu_cp_rd(gpu, 0x208cu), gpu_cp_rd(gpu, 0x2090u),
+-									    gpu_cp_rd(gpu, 0x3d000u),
+-									    gpu_cp_rd(gpu, 0x3f004u));
++									    gpu_cp_rd(gpu, 0x208cu), gpu_cp_rd(gpu, 0x2090u));
+ 									{
+ 										int trust = 0;
+ 										if (PE_parse_boot_argn("sweettrust", &trust, sizeof(trust)) && trust) {
