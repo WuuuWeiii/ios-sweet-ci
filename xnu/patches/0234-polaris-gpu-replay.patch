@@ -134,7 +134,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  /* ---- stage 7b: the ring, CP_ME_INIT and the first PM4 packets ---------- */
  
  static unsigned gpu_cp_wptr;            /* dwords written into the ring */
-@@ -1493,6 +1619,144 @@
+@@ -1493,6 +1619,147 @@
  	printf("SWEET GPU: cp ib test: %s\n", ok ? "PASSED - a command buffer plus a fence, "
  	    "the shape userspace will use" : "FAILED");
  	return ok;
@@ -210,7 +210,10 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +		sizeof(replay_ib2) / sizeof(replay_ib2[0]), sizeof(replay_ib3) / sizeof(replay_ib3[0]),
 +		sizeof(replay_ib4) / sizeof(replay_ib4[0])
 +	};
-+	bzero(base, 0x4000);
++	/* 0234: no bzero on the write-combined alias - it faults with an unaligned data abort. */
++	for (uint32_t z = 0; z < 0x4000u / 4u; z++) {
++		((volatile uint32_t *)base)[z] = 0;
++	}
 +	for (unsigned i = 0; i < sizeof(replay_main) / sizeof(replay_main[0]); i++) {
 +		*(uint32_t *)(base + 4u * i) = replay_main[i];
 +	}
@@ -279,7 +282,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  }
  
  /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
-@@ -3797,6 +4061,9 @@
+@@ -3828,6 +4095,9 @@
  									if (ok) {
  										ok = gpu_bo_test(gpu, g);
  									}
