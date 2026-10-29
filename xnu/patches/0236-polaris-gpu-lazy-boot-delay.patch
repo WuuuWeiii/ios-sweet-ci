@@ -11,7 +11,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +sweet_lazy_boot_thread(__unused void *arg, __unused wait_result_t wr)
 +{
 +	unsigned sec = (unsigned)(uintptr_t)arg;
-+	IOSleep(sec * 1000);
++	gpu_wait_ms(sec * 1000u);
 +	printf("SWEET GPU: lazy mode: delayed boot trigger after %u s\n", sec);
 +	sweet_gpu_lazy_start();
 +}
