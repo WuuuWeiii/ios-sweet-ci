@@ -1,0 +1,43 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1320,6 +1320,14 @@
+ };
+ static const uint32_t replay_ib_sizes[] = {196, 58, 18, 106, 19};
+ 
++/* 0244: cheap "is this diagnostic requested" helper for the bring-up probes. */
++static bool
++gpu_diag_enabled(const char *arg)
++{
++	int v = 0;
++	return PE_parse_boot_argn(arg, &v, sizeof(v)) && v != 0;
++}
++
+ /* ---- stage 7b: the ring, CP_ME_INIT and the first PM4 packets ---------- */
+ 
+ static unsigned gpu_cp_wptr;            /* dwords written into the ring */
+@@ -4109,7 +4117,7 @@
+ 									/* 0240: read CP internal control registers: SECURE_MODE (0x075),
+ 									 * IB_LEVEL (0x054), DRAW_STATE_ACTIVE_BITMASK (0x049), DRAW_STATE_SET_HDR
+ 									 * (0x04a), PREEMPT_ENABLE (0x071) via CP_REG_TO_MEM (0x3e). */
+-									{
++									if (gpu_diag_enabled("sweetcrdiag")) {
+ 										static const uint32_t cregs[] = { 0x075u, 0x054u, 0x049u, 0x04au, 0x071u,
+ 										    0x107u, 0x101u, 0x102u, 0x103u, 0x055u };
+ 										const uint32_t base = GPU_VA_CP_SCRATCH + 0x300u;
+@@ -4127,6 +4135,7 @@
+ 											    s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9]);
+ 										}
+ 									}
++									if (gpu_diag_enabled("sweetsecdiag")) {
+ 									/* 0238: is the CP really out of secure mode? */
+ 									/* 0242: only the four CP block registers here: CPU reads of
+ 									 * RBBM_SECVID_* stall the interconnect on this hypervisor. */
+@@ -4140,6 +4149,7 @@
+ 											printf("SWEET GPU: SECDIAG no-zap fallback: trust_cntl now %#x\n",
+ 											    gpu_cp_rd(gpu, 0x3d000u));
+ 										}
++									}
+ 									}
+ 									ok = gpu_cp_nop_test(gpu, g);
+ 									if (ok) {
