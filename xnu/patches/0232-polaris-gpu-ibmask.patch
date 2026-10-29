@@ -1,0 +1,100 @@
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -619,7 +619,63 @@
+ 		}
+ 	}
+ 	{
+-		/* 0225: dump the first command buffer once, to decode a hung submit offline. */
++		
++/* 0232: PM4 helpers for the command-stream experiments. */
++static uint32_t
++sweet_pm4_parity0232(uint32_t v)
++{
++	return (0x9669u >> (0xfu & (v ^ (v >> 4) ^ (v >> 8) ^ (v >> 12) ^
++	    (v >> 16) ^ (v >> 20) ^ (v >> 24) ^ (v >> 28)))) & 1u;
++}
++
++static void
++sweet_ib_mask(struct sweet_gem **objs, uint32_t nr_bos, uint64_t iova, uint32_t words,
++    uint32_t mask, uint32_t depth, uint32_t *patched)
++{
++	if (depth > 4) {
++		return;
++	}
++	struct sweet_gem *bo = NULL;
++	uint32_t off = 0;
++	for (uint32_t b = 0; b < nr_bos; b++) {
++		struct sweet_gem *t = objs[b];
++		if (t != NULL && t->kva != NULL && iova >= t->iova && iova < t->iova + t->size) {
++			bo = t;
++			off = (uint32_t)(iova - t->iova);
++			break;
++		}
++	}
++	if (bo == NULL || off + words * 4u > bo->size) {
++		return;
++	}
++	volatile uint32_t *p = (volatile uint32_t *)(bo->kva + off);
++	for (uint32_t i = 0; i + 1 < words; ) {
++		uint32_t w = p[i];
++		if ((w >> 28) == 7 && ((w >> 24) & 0xF) == 0) {
++			uint32_t op = (w >> 16) & 0x7f;
++			uint32_t cnt = w & 0x3fff;
++			if (op == mask) {
++				p[i] = 0x70000000u | cnt | (sweet_pm4_parity0232(cnt) << 15) |
++				    (0x10u << 16) | (sweet_pm4_parity0232(0x10u) << 23);
++				for (uint32_t k = 1; k <= cnt; k++) {
++					p[i + k] = 0;
++				}
++				(*patched)++;
++			} else if (op == 0x3f && cnt >= 3 && i + 3 < words) {
++				uint64_t t = (uint64_t)p[i + 1] | ((uint64_t)p[i + 2] << 32);
++				uint32_t tw = p[i + 3];
++				sweet_ib_mask(objs, nr_bos, t, tw, mask, depth + 1, patched);
++			}
++			i += 1 + cnt;
++		} else if ((w >> 28) == 4) {
++			i += 1 + (w & 0x7f);
++		} else {
++			i += 1;
++		}
++	}
++}
++
++/* 0225: dump the first command buffer once, to decode a hung submit offline. */
+ 		static int ib_dumped;
+ 		if (!ib_dumped && r->nr_cmds >= 1 && cmds[0].size >= 4) {
+ 			struct sweet_gem *cb = objs[cmds[0].submit_idx];
+@@ -677,9 +733,9 @@
+ 		{
+ 			uint32_t nibcut = 0;
+ 			uint32_t nibwhich = 0;
+-			(void)PE_parse_boot_argn("sweetnibcut", &nibcut, sizeof(nibcut));
++			bool has_nibcut = PE_parse_boot_argn("sweetnibcut", &nibcut, sizeof(nibcut));
+ 			(void)PE_parse_boot_argn("sweetnibwhich", &nibwhich, sizeof(nibwhich));
+-			if (nibcut != 0 && cmds[0].size >= 16) {
++			if (has_nibcut && cmds[0].size >= 16) {
+ 				struct sweet_gem *cb = objs[cmds[0].submit_idx];
+ 				volatile uint32_t *p = (volatile uint32_t *)(cb->kva + cmds[0].submit_offset);
+ 				uint32_t n = cmds[0].size / 4;
+@@ -709,7 +765,18 @@
+ 				}
+ 			}
+ 		}
+-		/* 0226: sweetibcut=<dwords> truncates the first command buffer (hang bisect). */
++				/* 0232: sweetnibmask=<opcode> replaces every packet with that opcode by a NOP. */
++		{
++			uint32_t nibmask = 0;
++			if (PE_parse_boot_argn("sweetnibmask", &nibmask, sizeof(nibmask))) {
++				struct sweet_gem *cb = objs[cmds[0].submit_idx];
++				uint32_t patched = 0;
++				sweet_ib_mask(objs, r->nr_bos, cb->iova + cmds[0].submit_offset,
++				    cmds[0].size / 4, nibmask, 0, &patched);
++				printf("SWEET GPU: NIBMASK op %#x patched %u\n", nibmask, patched);
++			}
++		}
++/* 0226: sweetibcut=<dwords> truncates the first command buffer (hang bisect). */
+ 		uint32_t ibcut = 0;
+ 		(void)PE_parse_boot_argn("sweetibcut", &ibcut, sizeof(ibcut));
+ 		if (ibcut != 0 && ibn[0] > ibcut) {
