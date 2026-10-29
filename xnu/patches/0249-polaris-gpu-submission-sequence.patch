@@ -1,0 +1,165 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1630,6 +1630,149 @@
+ }
+ 
+ 
++/* ---- 0249: submission-shape ladder, one boot, one ring dump per step --------- */
++extern void sweet_dbg_dump_now(void);
++
++static uint32_t
++gpu_seq_parity(uint32_t v)
++{
++	return (0x9669u >> (0xfu & (v ^ (v >> 4) ^ (v >> 8) ^ (v >> 12) ^
++	    (v >> 16) ^ (v >> 20) ^ (v >> 24) ^ (v >> 28)))) & 1u;
++}
++
++static uint32_t
++gpu_pkt4(uint32_t reg, uint32_t cnt)
++{
++	uint32_t par = (uint32_t)gpu_seq_parity(cnt);
++	uint32_t hdr = 0x40000000u | (cnt & 0x7fu) | (par << 7) | ((reg & 0x7ffffu) << 8);
++
++	return hdr | ((uint32_t)gpu_seq_parity(reg & 0x7ffffu) << 27);
++}
++
++static void
++gpu_seq_fence_emit(vm_offset_t core, vm_offset_t blob)
++{
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_CP_EVENT_WRITE, 4));
++	gpu_ring_emit(core + GPU_CP_RING, GPU_CP_CACHE_FLUSH_TS);
++	gpu_ring_emit(core + GPU_CP_RING, (uint32_t)(GPU_VA_CP_SCRATCH + GPU_CP_SCRATCH_FENCE));
++	gpu_ring_emit(core + GPU_CP_RING, 0);
++	gpu_ring_emit(core + GPU_CP_RING, ++gpu_cp_seq);
++	(void)blob;
++	gpu_ring_flush(core, gpu_cp_wptr);
++}
++
++static bool
++gpu_seq_ring_test(vm_offset_t core, vm_offset_t blob, const char *what, int kind)
++{
++	volatile uint32_t *fence =
++	    (volatile uint32_t *)(blob + GPU_CP_SCRATCH + GPU_CP_SCRATCH_FENCE);
++
++	*fence = 0;
++	if (kind == 0) {
++		gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_CP_NOP, 1));
++		gpu_ring_emit(core + GPU_CP_RING, 0);
++	} else if (kind == 1) {
++		gpu_ring_emit(core + GPU_CP_RING, gpu_pkt4(0x8e04u, 1));   /* RB_DBG_ECO_CNTL */
++		gpu_ring_emit(core + GPU_CP_RING, 0x04100000u);
++	} else {
++		gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(0x5fu, 1));      /* CP_SET_MARKER */
++		gpu_ring_emit(core + GPU_CP_RING, 0x00000000u);
++	}
++	gpu_seq_fence_emit(core, blob);
++	uint32_t seq = gpu_cp_seq;
++	bool idle = gpu_ring_wait_idle(core, what);
++	bool fenced = idle && gpu_cp_wait_fence(blob, seq, 3000);
++	printf("SWEET GPU: SEQ %s: ring %s, fence %u %s\n", what, idle ? "drained" : "STUCK",
++	    seq, fenced ? "retired" : "TIMED OUT");
++	sweet_dbg_dump_now();
++	return fenced;
++}
++
++static bool
++gpu_seq_ib_test(vm_offset_t core, vm_offset_t blob, const char *what, int kind)
++{
++	struct gpu_bo *bo = gpu_bo_alloc(0x1000);
++	if (bo == NULL) {
++		printf("SWEET GPU: SEQ %s: no BO\n", what);
++		return false;
++	}
++	uint32_t *ib = (uint32_t *)bo->kva;
++	uint32_t n = 0;
++	if (kind == 0) {
++		ib[n++] = gpu_pkt4(0x8e04u, 1);
++		ib[n++] = 0x04100000u;
++	} else if (kind == 1) {
++		ib[n++] = gpu_pkt7(GPU_CP_MEM_WRITE, 3);
++		ib[n++] = (uint32_t)(GPU_VA_CP_SCRATCH + 0x40u);
++		ib[n++] = 0;
++		ib[n++] = 0x600dc0deu;
++	}
++
++	__asm__ volatile("dsb sy" ::: "memory");
++	bool idle = gpu_cp_submit(core, blob, bo->va, n);
++	uint32_t seq = gpu_cp_seq;
++	bool fenced = idle && gpu_cp_wait_fence(blob, seq, 3000);
++	printf("SWEET GPU: SEQ %s: ib %u dwords, ring %s, fence %u %s\n", what, n,
++	    idle ? "drained" : "STUCK", seq, fenced ? "retired" : "TIMED OUT");
++	sweet_dbg_dump_now();
++	gpu_bo_free(bo);
++	return fenced;
++}
++
++static bool
++gpu_seq_nested_test(vm_offset_t core, vm_offset_t blob, const char *what, int inner_kind)
++{
++	struct gpu_bo *bo = gpu_bo_alloc(0x2000);
++	if (bo == NULL) {
++		printf("SWEET GPU: SEQ %s: no BO\n", what);
++		return false;
++	}
++	uint32_t *main_ib = (uint32_t *)bo->kva;
++	uint32_t *inner = (uint32_t *)((uint8_t *)bo->kva + 0x800u);
++	uint32_t n = 0;
++	inner[0] = (inner_kind == 0) ? gpu_pkt7(GPU_CP_NOP, 1) : gpu_pkt4(0x8e04u, 1);
++	inner[1] = (inner_kind == 0) ? 0x0u : 0x04100000u;
++	main_ib[n++] = gpu_pkt7(0x3fu, 3);                 /* CP_INDIRECT_BUFFER */
++	main_ib[n++] = (uint32_t)(bo->va + 0x800u);
++	main_ib[n++] = (uint32_t)((bo->va + 0x800u) >> 32);
++	main_ib[n++] = 2;
++	main_ib[n++] = gpu_pkt7(GPU_CP_NOP, 1);
++	main_ib[n++] = 0;
++	__asm__ volatile("dsb sy" ::: "memory");
++	bool idle = gpu_cp_submit(core, blob, bo->va, n);
++	uint32_t seq = gpu_cp_seq;
++	bool fenced = idle && gpu_cp_wait_fence(blob, seq, 3000);
++	printf("SWEET GPU: SEQ %s: nested %s, ring %s, fence %u %s\n", what,
++	    inner_kind == 0 ? "NOP" : "type4", idle ? "drained" : "STUCK", seq,
++	    fenced ? "retired" : "TIMED OUT");
++	sweet_dbg_dump_now();
++	gpu_bo_free(bo);
++	return fenced;
++}
++
++static void
++gpu_replay_seq(vm_offset_t core, vm_offset_t blob)
++{
++	printf("SWEET GPU: SEQ: submission ladder start\n");
++	sweet_dbg_dump_now();
++	if (!gpu_seq_ring_test(core, blob, "ring NOP", 0))
++		return;
++	if (!gpu_seq_ring_test(core, blob, "ring type4 RB_DBG_ECO_CNTL", 1))
++		return;
++	if (!gpu_seq_ring_test(core, blob, "ring CP_SET_MARKER", 2))
++		return;
++	if (!gpu_seq_ib_test(core, blob, "IB type4", 0))
++		return;
++	if (!gpu_seq_ib_test(core, blob, "IB CP_MEM_WRITE", 1))
++		return;
++	if (!gpu_seq_nested_test(core, blob, "nested IB NOP", 0))
++		return;
++	if (!gpu_seq_nested_test(core, blob, "nested IB type4", 1))
++		return;
++	printf("SWEET GPU: SEQ: all shapes retired\n");
++	sweet_dbg_dump_now();
++}
++
+ /* ---- 0234: replay the Mesa command stream from bring-up ----------------- */
+ /* The stream below is the one a real Mesa GL context submitted on this GPU (captured by 0228):
+    main IB (255 dwords) plus the five indirect buffers it chains. The indirect buffers are
+@@ -4226,7 +4369,10 @@
+ 										ok = gpu_bo_test(gpu, g);
+ 									}
+ 									if (ok) {
+-										(void)gpu_draw_replay(gpu, g);
++										if (gpu_diag_enabled("sweetreplayseq")) {
++										gpu_replay_seq(gpu, g);
++									}
++									(void)gpu_draw_replay(gpu, g);
+ 									}
+ 								}
+ 								int hold = 0;
