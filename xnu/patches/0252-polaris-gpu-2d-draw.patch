@@ -1,7 +1,7 @@
 diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 --- a/bsd/dev/sweet_gpu.c
 +++ b/bsd/dev/sweet_gpu.c
-@@ -2046,6 +2046,117 @@
+@@ -2046,6 +2046,143 @@
  	return fenced;
  }
  
@@ -112,6 +112,32 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +	    (*p0 & 0xff) == 0xff && ((*p0 >> 16) & 0xff) == 0x00 &&   /* orange, WZYX/RGBA bytes */
 +	    (*p2 & 0xff) == 0x00 && ((*p2 >> 16) & 0xff) == 0xff;     /* blue */
 +	printf("SWEET GPU: DRAW: %s\n", ok ? "PASSED - the 2D engine filled memory on command" : "FAILED");
++
++	/* sweetdrawtest=2: also show the picture: scale it 2x into the framebuffer. */
++	uint32_t mode = 0;
++	(void)PE_parse_boot_argn("sweetdrawtest", &mode, sizeof(mode));
++	if (fenced && mode >= 2) {
++		extern uintptr_t sweet_fb_pixels;
++		extern uint32_t sweet_fb_width, sweet_fb_height, sweet_fb_rowbytes;
++		volatile uint32_t *fb = (volatile uint32_t *)sweet_fb_pixels;
++		if (fb == NULL) {
++			printf("SWEET GPU: DRAW: no framebuffer to present into\n");
++		} else {
++			const uint32_t w = 512, h = 128, x0 = 200, y0 = 300;
++			uint32_t shown = 0;
++			for (uint32_t y = 0; y < h && y0 + y < sweet_fb_height; y++) {
++				uint32_t *src = (uint32_t *)(pix + (y / 2u) * row);
++				volatile uint32_t *dst = fb + ((y0 + y) * (sweet_fb_rowbytes / 4u)) + x0;
++				for (uint32_t x = 0; x < w && x0 + x < sweet_fb_width; x++) {
++					dst[x] = src[x / 2u];
++				}
++				shown++;
++			}
++			__asm__ volatile("dsb sy" ::: "memory");
++			printf("SWEET GPU: DRAW: presented %u rows at %u,%u into the framebuffer (%ux%u)\n",
++			    shown, x0, y0, sweet_fb_width, sweet_fb_height);
++		}
++	}
 +	sweet_dbg_dump_now();
 +	return ok;
 +}
@@ -119,7 +145,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
  static bool
  gpu_bo_test(vm_offset_t core, vm_offset_t blob)
-@@ -4449,6 +4560,9 @@
+@@ -4449,6 +4586,9 @@
  									if (gpu_diag_enabled("sweetreplayring")) {
  										(void)gpu_draw_replay_ring(gpu, g);
  									}
