@@ -1,0 +1,68 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2307,6 +2307,54 @@
+ 	    (unsigned)(sizeof(hwcg) / sizeof(hwcg[0])));
+ }
+ 
++/* ---- 0254: touch one register per 3D block, persisting after each (names a hung block) --- */
++static void
++gpu_block_probe(vm_offset_t core)
++{
++	static const struct { const char *name; uint32_t off; } regs[] = {
++		{ "VSC_ADDR_MODE_CNTL",   0x3004u },
++		{ "GRAS_ADDR_MODE_CNTL",  0x21804u },
++		{ "RB_ADDR_MODE_CNTL",    0x23814u },
++		{ "PC_ADDR_MODE_CNTL",    0x27804u },
++		{ "HLSQ_ADDR_MODE_CNTL",  0x2f814u },
++		{ "VFD_ADDR_MODE_CNTL",   0x29804u },
++		{ "VPC_ADDR_MODE_CNTL",   0x25804u },
++		{ "UCHE_ADDR_MODE_CNTL",  0x3800u },
++		{ "SP_ADDR_MODE_CNTL",    0x2b804u },
++		{ "TPL1_ADDR_MODE_CNTL",  0x2d804u },
++		{ "CP_ADDR_MODE_CNTL",    0x2108u },
++		{ "SP_DBG_ECO_CNTL",      0x2b800u },
++		{ "TPL1_DBG_ECO_CNTL",    0x2d800u },
++		{ "HLSQ_DBG_ECO_CNTL",    0x2f810u },
++		{ "RB_DBG_ECO_CNTL",      0x23810u },
++		{ "GRAS_DBG_ECO_CNTL",    0x21800u },
++		{ "VPC_DBG_ECO_CNTL",     0x25800u },
++		{ "PC_DBG_ECO_CNTL",      0x27800u },
++	};
++	printf("SWEET GPU: BLOCKPROBE: RBBM_CLOCK_CNTL before = %#x\n", gpu_rd_quiet(core, 0x2b8u));
++	sweet_dbg_dump_now();
++	for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); i++) {
++		printf("SWEET GPU: BLOCKPROBE: reading %s (%#x) ...\n", regs[i].name, regs[i].off);
++		sweet_dbg_dump_now();
++		uint32_t v = gpu_rd_quiet(core, regs[i].off);
++		printf("SWEET GPU: BLOCKPROBE: %s = %#x\n", regs[i].name, v);
++		sweet_dbg_dump_now();
++	}
++	/* write path on two block registers, restoring the old value */
++	{
++		uint32_t old = gpu_rd_quiet(core, 0x2b800u);
++		printf("SWEET GPU: BLOCKPROBE: SP_DBG_ECO_CNTL write test (old %#x)\n", old);
++		sweet_dbg_dump_now();
++		gpu_wr_quiet(core, 0x2b800u, old);
++		__asm__ volatile("dsb sy" ::: "memory");
++		printf("SWEET GPU: BLOCKPROBE: SP_DBG_ECO_CNTL write ok, reads %#x\n",
++		    gpu_rd_quiet(core, 0x2b800u));
++		sweet_dbg_dump_now();
++	}
++	printf("SWEET GPU: BLOCKPROBE: all blocks answered\n");
++	sweet_dbg_dump_now();
++}
++
+ /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
+ static bool
+ gpu_bo_test(vm_offset_t core, vm_offset_t blob)
+@@ -4641,6 +4689,9 @@
+ 								gpu_ring_flush(gpu, gpu_cp_wptr);
+ 								if (gpu_ring_wait_idle(gpu, "CP_SET_SECURE_MODE 0")) {
+ 									gpu_a6xx_draw_init(gpu);
++									if (gpu_diag_enabled("sweetblockprobe")) {
++										gpu_block_probe(gpu);
++									}
+ 									if (gpu_diag_enabled("sweethwcg")) {
+ 										gpu_a630_hwcg(gpu, gmu);
+ 									}
