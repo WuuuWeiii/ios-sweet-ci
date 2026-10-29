@@ -1,0 +1,25 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -286,8 +286,8 @@
+ #define GPU_CP_RING           (GPU_CP_BASE + 0x4000u)
+ #define GPU_CP_RING_BYTES     0x8000u
+ #define GPU_CP_SQE            (GPU_CP_BASE + 0xc000u)
+-#define GPU_CP_SQE_BYTES      0x8000u
+-#define GPU_CP_SCRATCH        (GPU_CP_BASE + 0x14000u)
++#define GPU_CP_SQE_BYTES      0x10000u  /* linux a630_sqe.fw[4:] is 34184 bytes */
++#define GPU_CP_SCRATCH        (GPU_CP_BASE + 0x1c000u)
+ #define GPU_CP_SCRATCH_BYTES  0x1000u
+ #define GPU_VA_CP_RING        0x40000000u
+ #define GPU_VA_CP_SQE         0x40010000u
+@@ -672,8 +672,8 @@
+ }
+ 
+ /* stage 7c: the zap shader through SCM (PAS id 13) */
+-#define GPU_ZAP_BASE           0x25000u   /* offset inside the blob */
+-#define GPU_ZAP_BYTES          0x3000u    /* .mdt 0x25000, b02 segment 0x27000 */
++#define GPU_ZAP_BASE           0x2d000u   /* offset inside the blob */
++#define GPU_ZAP_BYTES          0x3000u    /* .mdt 0x2d000, b02 segment 0x2f000 */
+ #define GPU_ZAP_MDT            (GPU_ZAP_BASE + 0x0000u)
+ #define GPU_ZAP_SEG            (GPU_ZAP_BASE + 0x2000u)
+ #define GPU_ZAP_MDT_MAX        0x2000u
