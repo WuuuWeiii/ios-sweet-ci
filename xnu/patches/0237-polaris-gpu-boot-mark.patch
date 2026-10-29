@@ -1,0 +1,33 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2499,6 +2499,7 @@
+ {
+ 	unsigned sec = (unsigned)(uintptr_t)arg;
+ 	gpu_wait_ms(sec * 1000u);
++	printf("SWEET GPU: lazy mode: boot trigger fired (%u s)\n", sec);
+ 	printf("SWEET GPU: lazy mode: delayed boot trigger after %u s\n", sec);
+ 	sweet_gpu_lazy_start();
+ }
+@@ -2527,6 +2528,7 @@
+ 	{
+ 		int delay = 0;
+ 		if (PE_parse_boot_argn("sweetlazyboot", &delay, sizeof(delay)) && delay > 0) {
++			printf("SWEET GPU: lazy mode: boot trigger armed (%d s)\n", delay);
+ 			thread_t t = NULL;
+ 			if (kernel_thread_start(sweet_lazy_boot_thread, (void *)(uintptr_t)delay, &t) ==
+ 			    KERN_SUCCESS) {
+@@ -3238,6 +3240,13 @@
+ sweet_gpu_probe_now(void)
+ {
+ 	int level = 0;
++	/* 0237: kernel-side boot marker for the fast experiment harness. */
++	{
++		char markbuf[48] = { 0 };
++		if (PE_parse_boot_argn("sweetmark", markbuf, sizeof(markbuf))) {
++			printf("SWEET GPU: MARK %s\n", markbuf);
++		}
++	}
+ 
+ 	if (g_gpu_forced_level != 0) {
+ 		level = g_gpu_forced_level;
