@@ -1,0 +1,28 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -291,7 +291,7 @@
+ #define GPU_CP_SCRATCH_BYTES  0x1000u
+ #define GPU_VA_CP_RING        0x40000000u
+ #define GPU_VA_CP_SQE         0x40010000u
+-#define GPU_VA_CP_SCRATCH     0x40020000u
++#define GPU_VA_CP_SCRATCH     0x40030000u   /* 0x40020000 stays unmapped: SQE guard page */
+ /* stage 7: the CP's registers (dword indexes, byte = 4 * N), from a6xx.xml */
+ #define A6XX_RBBM_VBIF_CLIENT_QOS_CNTL 0x0010u
+ #define A6XX_RBBM_INTERFACE_HANG_INT_CNTL 0x001fu
+@@ -2919,6 +2919,15 @@
+ 
+ 	gpu_scm_availability();
+ 
++	/* 0239: TrustZone may still hold the zap image of the previous boot (it survives a warm
++	 * reset) and it reads the metadata from memory, not from this CPU cache. */
++	{
++		extern void flush_dcache(vm_offset_t addr, unsigned count, int phys);
++		int drop = gpu_scm_pas("SHUTDOWN", 6, 1, 0, 0);
++		printf("SWEET GPU: zap: previous TrustZone image shutdown -> %d\n", drop);
++		flush_dcache((vm_offset_t)(uintptr_t)(blob + GPU_ZAP_MDT), GPU_ZAP_MDT_MAX, 0);
++		printf("SWEET GPU: zap: metadata flushed to memory before INIT_IMAGE\n");
++	}
+ 	if (gpu_scm_pas("INIT_IMAGE", 1, 0x82, meta_pa, 0) != 0) {
+ 		printf("SWEET GPU: zap INIT_IMAGE failed\n");
+ 		return false;
