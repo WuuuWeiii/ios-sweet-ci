@@ -1,0 +1,22 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -4318,6 +4318,18 @@
+ 								gpu_ring_flush(gpu, gpu_cp_wptr);
+ 								if (gpu_ring_wait_idle(gpu, "CP_SET_SECURE_MODE 0")) {
+ 									gpu_a6xx_draw_init(gpu);
++									/* 0250: a630 UBWC config (polaris dt: bank bit 15, min access 32,
++									 * ubwc mode 2) and SECVID trusted range off. sweetubwc=0 skips it. */
++									{
++										int ubwc = 1;
++										if (!PE_parse_boot_argn("sweetubwc", &ubwc, sizeof(ubwc)) || ubwc) {
++											gpu_wr_quiet(gpu, 0x23820u, 0x1005u);  /* RB_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x2d810u, 0x0045u);  /* TPL1_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x2b808u, 0x1005u);  /* SP_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x3e008u, 0x0u);     /* TSB trusted size */
++											printf("SWEET GPU: UBWC configured (bank bit 15, ubwc 2.0)\n");
++										}
++									}
+ 									/* 0240: read CP internal control registers: SECURE_MODE (0x075),
+ 									 * IB_LEVEL (0x054), DRAW_STATE_ACTIVE_BITMASK (0x049), DRAW_STATE_SET_HDR
+ 									 * (0x04a), PREEMPT_ENABLE (0x071) via CP_REG_TO_MEM (0x3e). */
