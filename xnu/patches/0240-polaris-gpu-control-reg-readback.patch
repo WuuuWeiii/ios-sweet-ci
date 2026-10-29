@@ -1,0 +1,29 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -4091,6 +4091,25 @@
+ 								gpu_ring_flush(gpu, gpu_cp_wptr);
+ 								if (gpu_ring_wait_idle(gpu, "CP_SET_SECURE_MODE 0")) {
+ 									gpu_a6xx_draw_init(gpu);
++									/* 0240: read CP internal control registers: SECURE_MODE (0x075),
++									 * IB_LEVEL (0x054), DRAW_STATE_ACTIVE_BITMASK (0x049), DRAW_STATE_SET_HDR
++									 * (0x04a), PREEMPT_ENABLE (0x071) via CP_REG_TO_MEM (0x3e). */
++									{
++										static const uint32_t cregs[] = { 0x075u, 0x054u, 0x049u, 0x04au, 0x071u };
++										const uint32_t base = GPU_VA_CP_SCRATCH + 0x300u;
++										for (unsigned ci = 0; ci < sizeof(cregs) / sizeof(cregs[0]); ci++) {
++											gpu_ring_emit(g + GPU_CP_RING, gpu_pkt7(0x3eu, 3));
++											gpu_ring_emit(g + GPU_CP_RING, cregs[ci]);
++											gpu_ring_emit(g + GPU_CP_RING, base + 4u * ci);
++											gpu_ring_emit(g + GPU_CP_RING, 0);
++										}
++										gpu_ring_flush(gpu, gpu_cp_wptr);
++										if (gpu_ring_wait_idle(gpu, "control register readback")) {
++											volatile uint32_t *s = (volatile uint32_t *)(g + GPU_CP_SCRATCH + 0x300);
++											printf("SWEET GPU: CRDIAG secure_mode %#x ib_level %#x ds_active %#x"
++											    " ds_set_hdr %#x preempt_en %#x\n", s[0], s[1], s[2], s[3], s[4]);
++										}
++									}
+ 									/* 0238: is the CP really out of secure mode? */
+ 									printf("SWEET GPU: SECDIAG misc_cntl %#x status1 %#x int %#x protect %#x"
+ 									    " trust_cntl %#x tsb_hi %#x\n",
