@@ -1,0 +1,70 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1672,6 +1672,24 @@
+ 	}
+ }
+ 
++/* 0247: replace words the SQE would reject as an invalid PM4 packet with a CP_NOP. */
++static void
++gpu_replay_fix_invalid(uint32_t *p, uint32_t words, uint32_t *fixed)
++{
++	for (uint32_t i = 0; i < words; ) {
++		uint32_t w = p[i];
++		if ((w >> 28) == 7 && ((w >> 24) & 0xF) == 0) {
++			i += 1 + (w & 0x3fff);
++		} else if ((w >> 28) == 4) {
++			i += 1 + (w & 0x7f);
++		} else {
++			p[i] = 0x70000000u;
++			(*fixed)++;
++			i++;
++		}
++	}
++}
++
+ static bool
+ gpu_draw_replay(vm_offset_t core, vm_offset_t blob)
+ {
+@@ -1691,6 +1709,9 @@
+ 	if (nib > 4) {
+ 		nib = 0;
+ 	}
++	uint32_t fixbad = 0, nibdump = 0;
++	(void)PE_parse_boot_argn("sweetreplayfix", &fixbad, sizeof(fixbad));
++	(void)PE_parse_boot_argn("sweetreplaynibdump", &nibdump, sizeof(nibdump));
+ 	if (cut == 0) {
+ 		cut = sizeof(replay_main) / sizeof(replay_main[0]);
+ 	}
+@@ -1743,6 +1764,8 @@
+ 					m[i + 1] = (uint32_t)addr;
+ 					m[i + 2] = (uint32_t)(addr >> 32);
+ 					m[i + 3] = (seen == nib && nibcut) ? nibcut : ib_size[seen];
++					printf("SWEET GPU: REPLAY: ib%u -> va %#x size %u\n",
++					    seen, m[i + 1], m[i + 3]);
+ 					seen++;
+ 				}
+ 				i += 1 + cnt;
+@@ -1755,6 +1778,22 @@
+ 		printf("SWEET GPU: REPLAY: relocated %u/%u IBs, bo va %#x\n", seen, 5u, bo->va);
+ 	}
+ 	uint32_t patched = 0;
++	if (fixbad) {
++		uint32_t fixed = 0;
++		gpu_replay_fix_invalid((uint32_t *)base, cut, &fixed);
++		for (unsigned i = 0; i < 5; i++) {
++			gpu_replay_fix_invalid((uint32_t *)(base + ib_off[i]), ib_size[i], &fixed);
++		}
++		printf("SWEET GPU: REPLAY: fixed %u invalid word(s) to CP_NOP\n", fixed);
++	}
++	if (nibdump) {
++		uint32_t *nb = (uint32_t *)(base + ib_off[nib]);
++		printf("SWEET GPU: REPLAY: nib %u first words:", nib);
++		for (unsigned k = 0; k < 8 && k < ib_size[nib]; k++) {
++			printf(" %08x", nb[k]);
++		}
++		printf("\n");
++	}
+ 	if (nibmask) {
+ 		uint32_t patched2 = 0;
+ 		gpu_replay_mask((uint32_t *)(base + ib_off[nib]), ib_size[nib], nibmask, &patched2);
