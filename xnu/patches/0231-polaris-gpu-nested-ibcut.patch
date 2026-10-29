@@ -1,0 +1,61 @@
+diff --git a/iokit/Kernel/arm/SweetAdreno.cpp b/iokit/Kernel/arm/SweetAdreno.cpp
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -673,6 +673,42 @@
+ 				}
+ 			}
+ 		}
++		/* 0231: sweetnibcut=<dwords> truncates the first nested IB referenced by the main one. */
++		{
++			uint32_t nibcut = 0;
++			uint32_t nibwhich = 0;
++			(void)PE_parse_boot_argn("sweetnibcut", &nibcut, sizeof(nibcut));
++			(void)PE_parse_boot_argn("sweetnibwhich", &nibwhich, sizeof(nibwhich));
++			if (nibcut != 0 && cmds[0].size >= 16) {
++				struct sweet_gem *cb = objs[cmds[0].submit_idx];
++				volatile uint32_t *p = (volatile uint32_t *)(cb->kva + cmds[0].submit_offset);
++				uint32_t n = cmds[0].size / 4;
++				uint32_t seen = 0;
++				for (uint32_t i = 0; i + 3 < n; ) {
++					uint32_t w = p[i];
++					if ((w >> 28) == 7 && ((w >> 24) & 0xF) == 0) {
++						uint32_t op = (w >> 16) & 0x7f;
++						uint32_t cnt = w & 0x3fff;
++						if (op == 0x3f && cnt >= 3) {
++							if (seen == nibwhich) {
++								uint32_t words = p[i + 3];
++								if (words > nibcut) {
++									printf("SWEET GPU: NIBCUT which=%u %u -> %u dwords\n", nibwhich, words, nibcut);
++									p[i + 3] = nibcut;
++								}
++								break;
++							}
++							seen++;
++						}
++						i += 1 + cnt;
++					} else if ((w >> 28) == 4) {
++						i += 1 + (w & 0x7f);
++					} else {
++						i++;
++					}
++				}
++			}
++		}
+ 		/* 0226: sweetibcut=<dwords> truncates the first command buffer (hang bisect). */
+ 		uint32_t ibcut = 0;
+ 		(void)PE_parse_boot_argn("sweetibcut", &ibcut, sizeof(ibcut));
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1855,6 +1855,11 @@
+ 		    gpu_cp_rd(gpu_core, 0x808u), gpu_cp_rd(gpu_core, 0x903u));
+ 		gpu_cp_wr(gpu_core, 0x908u, 1);
+ 		printf("SWEET GPU: CPDIAG sqe_stat1 %#x\n", gpu_cp_rd(gpu_core, 0x909u));
++		for (uint32_t s = 0; s < 4; s++) {
++			gpu_cp_wr(gpu_core, 0x908u, s);
++			printf("SWEET GPU: CPDIAG sqe_stat[%u] %#x\n", s, gpu_cp_rd(gpu_core, 0x909u));
++		}
++
+ 	}
+ 	return gpu_cp_seq;
+ }
