@@ -7,13 +7,13 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
  		    (unsigned)(count > 1 ? ib_iova[1] : 0));
 +		printf("SWEET GPU: CPDIAG int %#x protect %#x rptr %#x wptr %#x ib1 %#x/%#x ib2 %#x/%#x"
 +		    " sqe_cntl %#x crash %#x\n",
-+		    gpu_cp_rd(gpu_core, 0x208cu), gpu_cp_rd(gpu_core, 0x2090u),
-+		    gpu_cp_rd(gpu_core, 0x2018u), gpu_cp_rd(gpu_core, 0x201cu),
-+		    gpu_cp_rd(gpu_core, 0x24a0u), gpu_cp_rd(gpu_core, 0x250cu),
-+		    gpu_cp_rd(gpu_core, 0x24acu), gpu_cp_rd(gpu_core, 0x2510u),
-+		    gpu_cp_rd(gpu_core, 0x2020u), gpu_cp_rd(gpu_core, 0x240cu));
-+		gpu_cp_wr(gpu_core, 0x2420u, 1);
-+		printf("SWEET GPU: CPDIAG sqe_stat1 %#x\n", gpu_cp_rd(gpu_core, 0x2424u));
++		    gpu_cp_rd(gpu_core, 0x823u), gpu_cp_rd(gpu_core, 0x824u),
++		    gpu_cp_rd(gpu_core, 0x806u), gpu_cp_rd(gpu_core, 0x807u),
++		    gpu_cp_rd(gpu_core, 0x928u), gpu_cp_rd(gpu_core, 0x943u),
++		    gpu_cp_rd(gpu_core, 0x92bu), gpu_cp_rd(gpu_core, 0x944u),
++		    gpu_cp_rd(gpu_core, 0x808u), gpu_cp_rd(gpu_core, 0x903u));
++		gpu_cp_wr(gpu_core, 0x908u, 1);
++		printf("SWEET GPU: CPDIAG sqe_stat1 %#x\n", gpu_cp_rd(gpu_core, 0x909u));
  	}
  	return gpu_cp_seq;
  }
