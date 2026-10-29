@@ -1,0 +1,123 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2046,6 +2046,109 @@
+ 	return fenced;
+ }
+ 
++/* ---- 0252: the 2D engine fills a buffer on command (no Mesa, no IB) ---------- */
++#define GPU_2D_OPCODE_CP_SET_MARKER    0x65u
++#define GPU_2D_OPCODE_CP_WAIT_FOR_IDLE 0x26u
++#define GPU_2D_OPCODE_CP_BLIT          0x2cu
++#define GPU_2D_OPCODE_CP_EVENT_WRITE   0x46u
++#define GPU_2D_EVENT_FLUSH_COLOR       0x1du
++#define GPU_2D_EVENT_CACHE_FLUSH       0x04u
++#define GPU_2D_RB_CCU_CNTL             0x8e07u
++#define GPU_2D_GRAS_2D_BLIT_CNTL       0x8400u
++#define GPU_2D_GRAS_2D_DST_TL          0x8405u
++#define GPU_2D_GRAS_2D_DST_BR          0x8406u
++#define GPU_2D_RB_2D_BLIT_CNTL         0x8c00u
++#define GPU_2D_RB_2D_PIXEL_CNTL        0x8c01u
++#define GPU_2D_RB_2D_DST_INFO          0x8c17u
++#define GPU_2D_RB_2D_DST               0x8c18u
++#define GPU_2D_RB_2D_DST_PITCH         0x8c1au
++#define GPU_2D_RB_2D_SRC_SOLID_C0      0x8c2cu
++#define GPU_2D_SP_2D_DST_FORMAT        0xacc0u
++#define GPU_2D_BLIT_SOLID_8888         0x10f03080u
++#define GPU_2D_DST_BGRA_LINEAR         0x00000430u
++#define GPU_2D_SP_FORMAT               0x0000f181u
++
++static void
++gpu_draw_reg(vm_offset_t core, uint32_t reg, uint32_t val)
++{
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt4(reg, 1));
++	gpu_ring_emit(core + GPU_CP_RING, val);
++}
++
++static bool
++gpu_draw_test(vm_offset_t core, vm_offset_t blob)
++{
++	const uint32_t width = 256, height = 64, row = 1024;   /* 256 * 4 bytes: a multiple of 64 */
++	struct gpu_bo *bo = gpu_bo_alloc(0x10000);
++	if (bo == NULL) {
++		printf("SWEET GPU: DRAW: no BO\n");
++		return false;
++	}
++	uint8_t *pix = (uint8_t *)bo->kva;
++	volatile uint32_t *scratch = (volatile uint32_t *)(blob + GPU_CP_SCRATCH);
++
++	*scratch = 0;
++	/* the colour bands still in GPU caches have to reach memory before we read it */
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_SET_MARKER, 1));
++	gpu_ring_emit(core + GPU_CP_RING, 12u);          /* "2D blits follow" */
++	gpu_draw_reg(core, GPU_2D_RB_CCU_CNTL, 0x10000004u);
++
++	/* three bands: orange, white, blue */
++	{
++		const uint32_t band[3][2] = { { 0, 21 }, { 21, 42 }, { 42, 64 } };
++		const uint32_t col[3][3] = { { 255, 128, 0 }, { 255, 255, 255 }, { 0, 128, 255 } };
++		for (unsigned b = 0; b < 3; b++) {
++			uint32_t top = band[b][0], bot = band[b][1];
++			gpu_draw_reg(core, GPU_2D_GRAS_2D_DST_TL, top << 16);
++			gpu_draw_reg(core, GPU_2D_GRAS_2D_DST_BR,
++			    (width - 1u) | ((bot - 1u) << 16));
++			gpu_draw_reg(core, GPU_2D_RB_2D_SRC_SOLID_C0 + 0, col[b][0]);
++			gpu_draw_reg(core, GPU_2D_RB_2D_SRC_SOLID_C0 + 1, col[b][1]);
++			gpu_draw_reg(core, GPU_2D_RB_2D_SRC_SOLID_C0 + 2, col[b][2]);
++			gpu_draw_reg(core, GPU_2D_RB_2D_SRC_SOLID_C0 + 3, 255);
++			gpu_draw_reg(core, GPU_2D_RB_2D_BLIT_CNTL, GPU_2D_BLIT_SOLID_8888);
++			gpu_draw_reg(core, GPU_2D_GRAS_2D_BLIT_CNTL, GPU_2D_BLIT_SOLID_8888);
++			gpu_draw_reg(core, GPU_2D_SP_2D_DST_FORMAT, GPU_2D_SP_FORMAT);
++			gpu_draw_reg(core, GPU_2D_RB_2D_PIXEL_CNTL, 0);
++			gpu_draw_reg(core, GPU_2D_RB_2D_DST_INFO, GPU_2D_DST_BGRA_LINEAR);
++			gpu_draw_reg(core, GPU_2D_RB_2D_DST, (uint32_t)bo->va);
++			gpu_draw_reg(core, GPU_2D_RB_2D_DST + 1, (uint32_t)(bo->va >> 32));
++			gpu_draw_reg(core, GPU_2D_RB_2D_DST_PITCH, row >> 6);
++			gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_WAIT_FOR_IDLE, 0));
++			gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_BLIT, 1));
++			gpu_ring_emit(core + GPU_CP_RING, 3u);       /* "scale" */
++			gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_WAIT_FOR_IDLE, 0));
++		}
++	}
++	/* flush colour, then flush caches, then fence through the scratch timestamp */
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_EVENT_WRITE, 4));
++	gpu_ring_emit(core + GPU_CP_RING, GPU_2D_EVENT_FLUSH_COLOR);
++	gpu_ring_emit(core + GPU_CP_RING, (uint32_t)(GPU_VA_CP_SCRATCH + 0x20u));
++	gpu_ring_emit(core + GPU_CP_RING, 0);
++	gpu_ring_emit(core + GPU_CP_RING, 0);
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_EVENT_WRITE, 4));
++	gpu_ring_emit(core + GPU_CP_RING, GPU_2D_EVENT_CACHE_FLUSH);
++	gpu_ring_emit(core + GPU_CP_RING, (uint32_t)(GPU_VA_CP_SCRATCH + GPU_CP_SCRATCH_FENCE));
++	gpu_ring_emit(core + GPU_CP_RING, 0);
++	gpu_ring_emit(core + GPU_CP_RING, ++gpu_cp_seq);
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_2D_OPCODE_CP_WAIT_FOR_IDLE, 0));
++	gpu_ring_flush(core, gpu_cp_wptr);
++
++	bool idle = gpu_ring_wait_idle(core, "2D draw");
++	uint32_t seq = gpu_cp_seq;
++	bool fenced = idle && gpu_cp_wait_fence(blob, seq, 3000);
++	uint32_t *p0 = (uint32_t *)(pix + 10u * row);
++	uint32_t *p1 = (uint32_t *)(pix + 32u * row);
++	uint32_t *p2 = (uint32_t *)(pix + 58u * row);
++	printf("SWEET GPU: DRAW: ring %s, fence %u %s; pixels %08x %08x %08x\n",
++	    idle ? "drained" : "STUCK", seq, fenced ? "retired" : "TIMED OUT", *p0, *p1, *p2);
++	bool ok = idle && fenced && (*p0 | *p1 | *p2) != 0 &&
++	    (*p0 & 0xff) == 0x00 && (*p2 & 0xff) == 0xff;      /* orange .. blue in BGRA order */
++	printf("SWEET GPU: DRAW: %s\n", ok ? "PASSED - the 2D engine filled memory on command" : "FAILED");
++	sweet_dbg_dump_now();
++	return ok;
++}
++
+ /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
+ static bool
+ gpu_bo_test(vm_offset_t core, vm_offset_t blob)
+@@ -4449,6 +4552,9 @@
+ 									if (gpu_diag_enabled("sweetreplayring")) {
+ 										(void)gpu_draw_replay_ring(gpu, g);
+ 									}
++									if (gpu_diag_enabled("sweetdrawtest")) {
++										(void)gpu_draw_test(gpu, g);
++									}
+ 									(void)gpu_draw_replay(gpu, g);
+ 									}
+ 								}
