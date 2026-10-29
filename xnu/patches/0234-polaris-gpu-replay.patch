@@ -1,7 +1,7 @@
 diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 --- a/bsd/dev/sweet_gpu.c
 +++ b/bsd/dev/sweet_gpu.c
-@@ -1194,6 +1194,270 @@
+@@ -1194,6 +1194,132 @@
  	printf("SWEET GPU: a6xx draw init done (addr modes, uche, cp pool/protect, hang detect)\n");
  }
  
@@ -130,6 +130,15 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +	0x0000001eu,
 +};
 +static const uint32_t replay_ib_sizes[] = {196, 58, 18, 106, 19};
++
+ /* ---- stage 7b: the ring, CP_ME_INIT and the first PM4 packets ---------- */
+ 
+ static unsigned gpu_cp_wptr;            /* dwords written into the ring */
+@@ -1493,6 +1619,144 @@
+ 	printf("SWEET GPU: cp ib test: %s\n", ok ? "PASSED - a command buffer plus a fence, "
+ 	    "the shape userspace will use" : "FAILED");
+ 	return ok;
++}
 +
 +
 +/* ---- 0234: replay the Mesa command stream from bring-up ----------------- */
@@ -267,11 +276,9 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +	    gpu_cp_rd(core, 0x24a0u), gpu_cp_rd(core, 0x250cu),
 +	    gpu_cp_rd(core, 0x24acu), gpu_cp_rd(core, 0x2510u));
 +	return fenced;
-+}
-+
- /* ---- stage 7b: the ring, CP_ME_INIT and the first PM4 packets ---------- */
+ }
  
- static unsigned gpu_cp_wptr;            /* dwords written into the ring */
+ /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
 @@ -3797,6 +4061,9 @@
  									if (ok) {
  										ok = gpu_bo_test(gpu, g);
