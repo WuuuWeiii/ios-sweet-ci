@@ -1,0 +1,25 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -4082,6 +4082,21 @@
+ 								gpu_ring_flush(gpu, gpu_cp_wptr);
+ 								if (gpu_ring_wait_idle(gpu, "CP_SET_SECURE_MODE 0")) {
+ 									gpu_a6xx_draw_init(gpu);
++									/* 0238: is the CP really out of secure mode? */
++									printf("SWEET GPU: SECDIAG misc_cntl %#x status1 %#x int %#x protect %#x"
++									    " trust_cntl %#x tsb_hi %#x\n",
++									    gpu_cp_rd(gpu, 0x2100u), gpu_cp_rd(gpu, 0x2094u),
++									    gpu_cp_rd(gpu, 0x208cu), gpu_cp_rd(gpu, 0x2090u),
++									    gpu_cp_rd(gpu, 0x3d000u),
++									    gpu_cp_rd(gpu, 0x3f004u));
++									{
++										int trust = 0;
++										if (PE_parse_boot_argn("sweettrust", &trust, sizeof(trust)) && trust) {
++											gpu_cp_wr(gpu, 0x3d000u, 0);       /* RBBM_SECVID_TRUST_CNTL */
++											printf("SWEET GPU: SECDIAG no-zap fallback: trust_cntl now %#x\n",
++											    gpu_cp_rd(gpu, 0x3d000u));
++										}
++									}
+ 									ok = gpu_cp_nop_test(gpu, g);
+ 									if (ok) {
+ 										ok = gpu_cp_fill_test(gpu, g);
