@@ -1,0 +1,61 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1680,6 +1680,14 @@
+ 	(void)PE_parse_boot_argn("sweetreplaycut", &cut, sizeof(cut));
+ 	(void)PE_parse_boot_argn("sweetreplaymask", &mask1, sizeof(mask1));
+ 	(void)PE_parse_boot_argn("sweetreplaymask2", &mask2, sizeof(mask2));
++	/* 0245: nested-IB bisect: pick one of the five buffers, cut it short or mask an opcode. */
++	uint32_t nib = 0, nibcut = 0, nibmask = 0;
++	(void)PE_parse_boot_argn("sweetreplaynib", &nib, sizeof(nib));
++	(void)PE_parse_boot_argn("sweetreplaynibcut", &nibcut, sizeof(nibcut));
++	(void)PE_parse_boot_argn("sweetreplaynibmask", &nibmask, sizeof(nibmask));
++	if (nib > 4) {
++		nib = 0;
++	}
+ 	if (cut == 0) {
+ 		cut = sizeof(replay_main) / sizeof(replay_main[0]);
+ 	}
+@@ -1731,7 +1739,7 @@
+ 					uint64_t addr = bo->va + ib_off[seen];
+ 					m[i + 1] = (uint32_t)addr;
+ 					m[i + 2] = (uint32_t)(addr >> 32);
+-					m[i + 3] = ib_size[seen];
++					m[i + 3] = (seen == nib && nibcut) ? nibcut : ib_size[seen];
+ 					seen++;
+ 				}
+ 				i += 1 + cnt;
+@@ -1744,6 +1752,11 @@
+ 		printf("SWEET GPU: REPLAY: relocated %u/%u IBs, bo va %#x\n", seen, 5u, bo->va);
+ 	}
+ 	uint32_t patched = 0;
++	if (nibmask) {
++		uint32_t patched2 = 0;
++		gpu_replay_mask((uint32_t *)(base + ib_off[nib]), ib_size[nib], nibmask, &patched2);
++		printf("SWEET GPU: REPLAY: nib %u mask %#x patched %u\n", nib, nibmask, patched2);
++	}
+ 	if (mask1) {
+ 		uint32_t *m = (uint32_t *)base;
+ 		gpu_replay_mask(m, cut, mask1, &patched);
+@@ -1771,12 +1784,15 @@
+ 	printf("SWEET GPU: REPLAY: dwords %u masks %#x/%#x patched %u: submit %s, fence %u %s\n",
+ 	    cut, mask1, mask2, patched, idle ? "drained" : "STUCK", seq,
+ 	    fenced ? "retired" : "TIMED OUT");
+-	printf("SWEET GPU: REPLAY: cp int %#x status1 %#x hw_fault %#x rptr %#x wptr %#x "
+-	    "ib1 %#x/%#x ib2 %#x/%#x\n",
+-	    gpu_cp_rd(core, 0x20ccu), gpu_cp_rd(core, 0x2094u), gpu_cp_rd(core, 0x2084u),
+-	    gpu_cp_rd(core, 0x2018u), gpu_cp_rd(core, 0x201cu),
+-	    gpu_cp_rd(core, 0x24a0u), gpu_cp_rd(core, 0x250cu),
+-	    gpu_cp_rd(core, 0x24acu), gpu_cp_rd(core, 0x2510u));
++	/* 0245: reading CP registers after a wedge blocks the CPU forever; only dump on success. */
++	if (fenced) {
++		printf("SWEET GPU: REPLAY: cp int %#x status1 %#x hw_fault %#x rptr %#x wptr %#x "
++		    "ib1 %#x/%#x ib2 %#x/%#x\n",
++		    gpu_cp_rd(core, 0x20ccu), gpu_cp_rd(core, 0x2094u), gpu_cp_rd(core, 0x2084u),
++		    gpu_cp_rd(core, 0x2018u), gpu_cp_rd(core, 0x201cu),
++		    gpu_cp_rd(core, 0x24a0u), gpu_cp_rd(core, 0x250cu),
++		    gpu_cp_rd(core, 0x24acu), gpu_cp_rd(core, 0x2510u));
++	}
+ 	return fenced;
+ }
+ 
