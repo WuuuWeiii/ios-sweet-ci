@@ -1,0 +1,19 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2923,8 +2923,13 @@
+ 	 * reset) and it reads the metadata from memory, not from this CPU cache. */
+ 	{
+ 		extern void flush_dcache(vm_offset_t addr, unsigned count, int phys);
+-		int drop = gpu_scm_pas("SHUTDOWN", 6, 1, 0, 0);
+-		printf("SWEET GPU: zap: previous TrustZone image shutdown -> %d\n", drop);
++		/* 0241: the PAS SHUTDOWN SMC never returns on this bootloader/TZ, so it is
++		 * opt-in; only the metadata cache flush stays unconditional. */
++		int drop = 0;
++		if (PE_parse_boot_argn("sweetzapdrop", &drop, sizeof(drop)) && drop) {
++			int r = gpu_scm_pas("SHUTDOWN", 6, 1, 0, 0);
++			printf("SWEET GPU: zap: previous TrustZone image shutdown -> %d\n", r);
++		}
+ 		flush_dcache((vm_offset_t)(uintptr_t)(blob + GPU_ZAP_MDT), GPU_ZAP_MDT_MAX, 0);
+ 		printf("SWEET GPU: zap: metadata flushed to memory before INIT_IMAGE\n");
+ 	}
