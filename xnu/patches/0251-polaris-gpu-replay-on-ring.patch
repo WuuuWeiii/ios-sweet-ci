@@ -1,0 +1,82 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1984,6 +1984,68 @@
+ 	return fenced;
+ }
+ 
++/* ---- 0251: flatten the Mesa stream into the ring itself (no IB at all) ------- */
++static void
++gpu_replay_ring_emit_ib(vm_offset_t core, const uint32_t *p, uint32_t words,
++    const uint32_t *const *ibs, const uint32_t *sizes, unsigned nbs, unsigned *used)
++{
++	for (uint32_t i = 0; i < words; ) {
++		uint32_t w = p[i];
++		if ((w >> 28) == 7 && ((w >> 24) & 0xF) == 0) {
++			uint32_t op = (w >> 16) & 0x7f;
++			uint32_t cnt = w & 0x3fff;
++			if (op == 0x3fu && cnt >= 3 && *used < nbs && i + 3 < words) {
++				const uint32_t *sub = ibs[*used];
++				uint32_t subn = sizes[*used];
++				(*used)++;
++				gpu_replay_ring_emit_ib(core, sub, subn, ibs, sizes, nbs, used);
++				i += 1 + cnt;
++				continue;
++			}
++			gpu_ring_emit(core + GPU_CP_RING, w);
++			for (uint32_t k = 1; k <= cnt && i + k < words; k++) {
++				gpu_ring_emit(core + GPU_CP_RING, p[i + k]);
++			}
++			i += 1 + cnt;
++		} else {
++			gpu_ring_emit(core + GPU_CP_RING, w);
++			i++;
++		}
++	}
++}
++
++static bool
++gpu_draw_replay_ring(vm_offset_t core, vm_offset_t blob)
++{
++	volatile uint32_t *fence = (volatile uint32_t *)(blob + GPU_CP_SCRATCH + GPU_CP_SCRATCH_FENCE);
++	static const uint32_t *ibs[5] = { replay_ib0, replay_ib1, replay_ib2, replay_ib3, replay_ib4 };
++	const uint32_t sizes[5] = {
++		sizeof(replay_ib0) / sizeof(replay_ib0[0]), sizeof(replay_ib1) / sizeof(replay_ib1[0]),
++		sizeof(replay_ib2) / sizeof(replay_ib2[0]), sizeof(replay_ib3) / sizeof(replay_ib3[0]),
++		sizeof(replay_ib4) / sizeof(replay_ib4[0])
++	};
++	unsigned used = 0;
++	unsigned wptr0 = gpu_cp_wptr;
++	*fence = 0;
++	gpu_replay_ring_emit_ib(core, replay_main, sizeof(replay_main) / sizeof(replay_main[0]),
++	    ibs, sizes, 5, &used);
++	gpu_ring_emit(core + GPU_CP_RING, gpu_pkt7(GPU_CP_EVENT_WRITE, 4));
++	gpu_ring_emit(core + GPU_CP_RING, GPU_CP_CACHE_FLUSH_TS);
++	gpu_ring_emit(core + GPU_CP_RING, (uint32_t)(GPU_VA_CP_SCRATCH + GPU_CP_SCRATCH_FENCE));
++	gpu_ring_emit(core + GPU_CP_RING, 0);
++	gpu_ring_emit(core + GPU_CP_RING, ++gpu_cp_seq);
++	gpu_ring_flush(core, gpu_cp_wptr);
++	unsigned n = (gpu_cp_wptr + (GPU_CP_RING_BYTES / 4) - wptr0) % (GPU_CP_RING_BYTES / 4);
++	printf("SWEET GPU: REPLAY: on-ring %u dwords from %u (%u nested IBs)\n", n, wptr0, used);
++	bool idle = gpu_ring_wait_idle(core, "on-ring Mesa stream");
++	uint32_t seq = gpu_cp_seq;
++	bool fenced = idle && gpu_cp_wait_fence(blob, seq, 4000);
++	printf("SWEET GPU: REPLAY: on-ring submit %s, fence %u %s\n", idle ? "drained" : "STUCK",
++	    seq, fenced ? "retired" : "TIMED OUT");
++	sweet_dbg_dump_now();
++	return fenced;
++}
++
+ /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
+ static bool
+ gpu_bo_test(vm_offset_t core, vm_offset_t blob)
+@@ -4384,6 +4446,9 @@
+ 										if (gpu_diag_enabled("sweetreplayseq")) {
+ 										gpu_replay_seq(gpu, g);
+ 									}
++									if (gpu_diag_enabled("sweetreplayring")) {
++										(void)gpu_draw_replay_ring(gpu, g);
++									}
+ 									(void)gpu_draw_replay(gpu, g);
+ 									}
+ 								}
