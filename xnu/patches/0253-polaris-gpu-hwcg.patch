@@ -1,0 +1,144 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2183,6 +2183,130 @@
+ 	return ok;
+ }
+ 
++/* ---- 0253: the a630 HWCG (clock gating) table, opt-in with sweethwcg=1 ---------- */
++static void
++gpu_a630_hwcg(vm_offset_t core, vm_offset_t gmu)
++{
++	static const struct { uint32_t off, val; } hwcg[] = {
++			{ 0x002c0u, 0x22222222u },
++			{ 0x002c4u, 0x22222222u },
++			{ 0x002c8u, 0x22222222u },
++			{ 0x002ccu, 0x22222222u },
++			{ 0x002d0u, 0x02022220u },
++			{ 0x002d4u, 0x02022220u },
++			{ 0x002d8u, 0x02022220u },
++			{ 0x002dcu, 0x02022220u },
++			{ 0x002e0u, 0x00000080u },
++			{ 0x002e4u, 0x00000080u },
++			{ 0x002e8u, 0x00000080u },
++			{ 0x002ecu, 0x00000080u },
++			{ 0x002f0u, 0x0000f3cfu },
++			{ 0x002f4u, 0x0000f3cfu },
++			{ 0x002f8u, 0x0000f3cfu },
++			{ 0x002fcu, 0x0000f3cfu },
++			{ 0x00300u, 0x02222222u },
++			{ 0x00304u, 0x02222222u },
++			{ 0x00308u, 0x02222222u },
++			{ 0x0030cu, 0x02222222u },
++			{ 0x00310u, 0x22222222u },
++			{ 0x00314u, 0x22222222u },
++			{ 0x00318u, 0x22222222u },
++			{ 0x0031cu, 0x22222222u },
++			{ 0x00320u, 0x22222222u },
++			{ 0x00324u, 0x22222222u },
++			{ 0x00328u, 0x22222222u },
++			{ 0x0032cu, 0x22222222u },
++			{ 0x00330u, 0x00022222u },
++			{ 0x00334u, 0x00022222u },
++			{ 0x00338u, 0x00022222u },
++			{ 0x0033cu, 0x00022222u },
++			{ 0x00380u, 0x77777777u },
++			{ 0x00384u, 0x77777777u },
++			{ 0x00388u, 0x77777777u },
++			{ 0x0038cu, 0x77777777u },
++			{ 0x00390u, 0x77777777u },
++			{ 0x00394u, 0x77777777u },
++			{ 0x00398u, 0x77777777u },
++			{ 0x0039cu, 0x77777777u },
++			{ 0x003a0u, 0x77777777u },
++			{ 0x003a4u, 0x77777777u },
++			{ 0x003a8u, 0x77777777u },
++			{ 0x003acu, 0x77777777u },
++			{ 0x003b0u, 0x00077777u },
++			{ 0x003b4u, 0x00077777u },
++			{ 0x003b8u, 0x00077777u },
++			{ 0x003bcu, 0x00077777u },
++			{ 0x00340u, 0x11111111u },
++			{ 0x00344u, 0x11111111u },
++			{ 0x00348u, 0x11111111u },
++			{ 0x0034cu, 0x11111111u },
++			{ 0x00350u, 0x11111111u },
++			{ 0x00354u, 0x11111111u },
++			{ 0x00358u, 0x11111111u },
++			{ 0x0035cu, 0x11111111u },
++			{ 0x00360u, 0x11111111u },
++			{ 0x00364u, 0x11111111u },
++			{ 0x00368u, 0x11111111u },
++			{ 0x0036cu, 0x11111111u },
++			{ 0x00370u, 0x00011111u },
++			{ 0x00374u, 0x00011111u },
++			{ 0x00378u, 0x00011111u },
++			{ 0x0037cu, 0x00011111u },
++			{ 0x0042cu, 0x22222222u },
++			{ 0x00430u, 0x22222222u },
++			{ 0x00434u, 0x22222222u },
++			{ 0x00438u, 0x00222222u },
++			{ 0x00440u, 0x00000004u },
++			{ 0x0043cu, 0x00000002u },
++			{ 0x003c0u, 0x22222222u },
++			{ 0x003c4u, 0x22222222u },
++			{ 0x003c8u, 0x22222222u },
++			{ 0x003ccu, 0x22222222u },
++			{ 0x003d0u, 0x00002222u },
++			{ 0x003d4u, 0x00002222u },
++			{ 0x003d8u, 0x00002222u },
++			{ 0x003dcu, 0x00002222u },
++			{ 0x003e0u, 0x00002220u },
++			{ 0x003e4u, 0x00002220u },
++			{ 0x003e8u, 0x00002220u },
++			{ 0x003ecu, 0x00002220u },
++			{ 0x00400u, 0x00040f00u },
++			{ 0x00404u, 0x00040f00u },
++			{ 0x00408u, 0x00040f00u },
++			{ 0x0040cu, 0x00040f00u },
++			{ 0x00410u, 0x05022022u },
++			{ 0x00414u, 0x00005555u },
++			{ 0x00418u, 0x00000011u },
++			{ 0x0041cu, 0x00445044u },
++			{ 0x00420u, 0x04222222u },
++			{ 0x00450u, 0x00222222u },
++			{ 0x00444u, 0x00002222u },
++			{ 0x00428u, 0x00000000u },
++			{ 0x00458u, 0x04104004u },
++			{ 0x0044cu, 0x00000000u },
++			{ 0x00470u, 0x00000000u },
++			{ 0x00424u, 0x00004000u },
++			{ 0x00454u, 0x00000200u },
++			{ 0x00448u, 0x00002222u },
++			{ 0x0045cu, 0x00000002u },
++			{ 0x0046cu, 0x00002222u },
++			{ 0x00460u, 0x00000222u },
++			{ 0x00464u, 0x00000111u },
++			{ 0x00468u, 0x00000555u },
++	};
++	/* GMU CGC: mode 0x00020202, delay 0x10111, hyst 0x5555 (a630 values) */
++	gpu_wr_quiet(gmu, 0x9309u * 4u, 0x00020202u);
++	gpu_wr_quiet(gmu, 0x930au * 4u, 0x00010111u);
++	gpu_wr_quiet(gmu, 0x930bu * 4u, 0x00005555u);
++	for (unsigned i = 0; i < sizeof(hwcg) / sizeof(hwcg[0]); i++) {
++		gpu_wr_quiet(core, hwcg[i].off, hwcg[i].val);
++	}
++	gpu_wr_quiet(core, 0x000aeu * 4u, 0x8aa8aa02u);   /* RBBM_CLOCK_CNTL: on for a630 */
++	__asm__ volatile("dsb sy" ::: "memory");
++	printf("SWEET GPU: a630 HWCG: %u clock-gating registers + RBBM_CLOCK_CNTL 0x8aa8aa02\n",
++	    (unsigned)(sizeof(hwcg) / sizeof(hwcg[0])));
++}
++
+ /* Allocate, map, submit into, fence, verify, free - the whole buffer path. */
+ static bool
+ gpu_bo_test(vm_offset_t core, vm_offset_t blob)
+@@ -4517,6 +4641,9 @@
+ 								gpu_ring_flush(gpu, gpu_cp_wptr);
+ 								if (gpu_ring_wait_idle(gpu, "CP_SET_SECURE_MODE 0")) {
+ 									gpu_a6xx_draw_init(gpu);
++									if (gpu_diag_enabled("sweethwcg")) {
++										gpu_a630_hwcg(gpu, gmu);
++									}
+ 									/* 0250: a630 UBWC config (polaris dt: bank bit 15, min access 32,
+ 									 * ubwc mode 2) and SECVID trusted range off. sweetubwc=0 skips it. */
+ 									{
