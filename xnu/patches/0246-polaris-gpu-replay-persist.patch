@@ -1,0 +1,23 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1637,6 +1637,9 @@
+    experiment needs no iOS userspace at all: bring-up finishes in seconds. */
+ static bool gpu_replay_done;
+ 
++/* 0246: persist the console ring to the oops partition (implemented in sweet_ufs.c). */
++extern void sweet_dbg_dump_now(void);
++
+ static uint32_t
+ gpu_replay_parity(uint32_t v)
+ {
+@@ -1793,6 +1796,9 @@
+ 		    gpu_cp_rd(core, 0x24a0u), gpu_cp_rd(core, 0x250cu),
+ 		    gpu_cp_rd(core, 0x24acu), gpu_cp_rd(core, 0x2510u));
+ 	}
++	/* 0246: the next boot may fail bring-up after a wedged submit, so persist now. */
++	sweet_dbg_dump_now();
++	printf("SWEET GPU: REPLAY: ring persisted to the oops partition\n");
+ 	return fenced;
+ }
+ 
