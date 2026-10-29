@@ -1,0 +1,41 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2492,6 +2492,17 @@
+ 	wakeup(&gpu_lazy_chan);
+ }
+ 
++/* 0236: start the lazy bring-up from a delayed kernel thread: at probe time the PMIC and the
++ * power domains are not ready yet and the bring-up would touch them too early. */
++static void
++sweet_lazy_boot_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	unsigned sec = (unsigned)(uintptr_t)arg;
++	IOSleep(sec * 1000);
++	printf("SWEET GPU: lazy mode: delayed boot trigger after %u s\n", sec);
++	sweet_gpu_lazy_start();
++}
++
+ void
+ sweet_gpu_lazy_register(void)
+ {
+@@ -2512,11 +2523,15 @@
+ 	 * lazy bring-up has made the GPU live.
+ 	 */
+ 	printf("SWEET GPU: lazy mode: /dev/sweetgpu registered, SweetAdreno630 deferred\n");
+-	/* 0235: sweetlazyboot=1 starts the bring-up from the boot path (fast CP experiments). */
++	/* 0236: sweetlazyboot=<seconds> starts the bring-up after that delay. */
+ 	{
+-		int lazyboot = 0;
+-		if (PE_parse_boot_argn("sweetlazyboot", &lazyboot, sizeof(lazyboot)) && lazyboot) {
+-			sweet_gpu_lazy_start();
++		int delay = 0;
++		if (PE_parse_boot_argn("sweetlazyboot", &delay, sizeof(delay)) && delay > 0) {
++			thread_t t = NULL;
++			if (kernel_thread_start(sweet_lazy_boot_thread, (void *)(uintptr_t)delay, &t) ==
++			    KERN_SUCCESS) {
++				thread_deallocate(t);
++			}
+ 		}
+ 	}
+ }
