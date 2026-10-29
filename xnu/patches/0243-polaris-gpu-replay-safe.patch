@@ -1,0 +1,29 @@
+diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1691,7 +1691,13 @@
+ 		sizeof(replay_ib2) / sizeof(replay_ib2[0]), sizeof(replay_ib3) / sizeof(replay_ib3[0]),
+ 		sizeof(replay_ib4) / sizeof(replay_ib4[0])
+ 	};
+-	/* 0234: no bzero on the write-combined alias - it faults with an unaligned data abort. */
++	/* 0243: report the mapping and never write outside the BO. */
++	printf("SWEET GPU: REPLAY: bo kva %#llx va %#x size %u\n",
++	    (unsigned long long)bo->kva, bo->va, (unsigned)bo->size);
++	if (bo->size < 0x4000u) {
++		printf("SWEET GPU: REPLAY: BO too small (%u)\n", (unsigned)bo->size);
++		return false;
++	}
+ 	for (uint32_t z = 0; z < 0x4000u / 4u; z++) {
+ 		((volatile uint32_t *)base)[z] = 0;
+ 	}
+@@ -1736,6 +1742,10 @@
+ 		for (unsigned i = 0; i < 5; i++) {
+ 			gpu_replay_mask((uint32_t *)(base + ib_off[i]), ib_size[i], mask1, &patched);
+ 		}
++	}
++	if (on == 2) {
++		printf("SWEET GPU: REPLAY: setup-only mode, BO filled, not submitting\n");
++		return true;
+ 	}
+ 	if (mask2) {
+ 		uint32_t *m = (uint32_t *)base;
