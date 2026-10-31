@@ -1,0 +1,33 @@
+From: polaris research
+Subject: [PATCH] 0256: boot-arg sweetibdump=1 dumps the head of the first Mesa IB
+
+When the CP stops on the first real Mesa submission, the words it was reading are the
+only evidence: sweetibcut bisect shows the hang starts between dword 8 and 16 of the main
+command buffer, so dump its head (64 dwords) to decode the packet offline.
+
+--- a/iokit/Kernel/arm/SweetAdreno.cpp
++++ b/iokit/Kernel/arm/SweetAdreno.cpp
+@@ -783,6 +783,23 @@
+ 			printf("SWEET GPU: IBCUT %u -> %u dwords\n", ibn[0], ibcut);
+ 			ibn[0] = ibcut;
+ 		}
++		/* 0256: dump the head of the first command buffer on demand, so a CP that stops on
++		 * one of Mesa's packets can be decoded offline (sweetibdump=1). */
++		{
++			int ibdump = 0;
++			if (PE_parse_boot_argn("sweetibdump", &ibdump, sizeof(ibdump)) && ibdump != 0) {
++				struct sweet_gem *cb = objs[cmds[0].submit_idx];
++				const volatile uint32_t *p = (const volatile uint32_t *)(cb->kva + cmds[0].submit_offset);
++				uint32_t n = ibn[0];
++				printf("SWEET GPU: IBDUMP0 iova %#llx dwords %u type %u\n",
++				    (unsigned long long)ib[0], n, cmds[0].type);
++				for (uint32_t k = 0; k < n && k < 64; k += 8) {
++					printf("SWEET GPU: IBD0 %03u: %08x %08x %08x %08x %08x %08x %08x %08x\n", k,
++					    (unsigned)p[k], (unsigned)p[k+1], (unsigned)p[k+2], (unsigned)p[k+3],
++					    (unsigned)p[k+4], (unsigned)p[k+5], (unsigned)p[k+6], (unsigned)p[k+7]);
++				}
++			}
++		}
+ 		uint32_t fence = sweet_gpu_submit(ib, ibn, r->nr_cmds);
+ 		if (fence == 0) {
+ 			ret = kIOReturnNoResources;
