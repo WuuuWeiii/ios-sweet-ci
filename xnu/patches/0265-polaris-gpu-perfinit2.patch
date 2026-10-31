@@ -1,0 +1,36 @@
+From: polaris research
+Subject: [PATCH] 0265: perfcounter SRAM init + bounded wait (sweetperfinit=1)
+
+Manual hunk with trailing context only: the earlier pure-add patch was skipped by the CI
+applier ("already upstream, previously applied"). Adds the RBBM_PERFCTR_SRAM_INIT_CMD write
+and the bounded wait for RBBM_PERFCTR_SRAM_INIT_STATUS that UniXNU documents for A7XX and
+that matches our "CP stops on the first client packets" symptom.
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1192,4 +1192,25 @@
+ 	gpu_wr_quiet(core, base + 31u * 4, 0x80011c00u);   /* last span: infinite */
++	/* 0265: clear the performance counter SRAM and wait for it before any client stream runs.
++	 * UniXNU's A7XX ring documents that without this wait a client IB can start while the SRAM
++	 * is still clearing and the CP stops on that IB's first packets (same shape as our hang). */
++	{
++		int perfinit = 0;
++
++		if (PE_parse_boot_argn("sweetperfinit", &perfinit, sizeof(perfinit)) && perfinit) {
++			uint32_t st = 0;
++
++			gpu_wr_quiet(core, 0x1438u, 1u);        /* RBBM_PERFCTR_SRAM_INIT_CMD */
++			__asm__ volatile("dsb sy" ::: "memory");
++			for (int i = 0; i < 200; i++) {
++				st = gpu_rd_quiet(core, 0x143cu);   /* RBBM_PERFCTR_SRAM_INIT_STATUS */
++				if (st & 1u) {
++					break;
++				}
++				gpu_wait_ms(1);
++			}
++			printf("SWEET GPU: PERFCTR SRAM INIT: status %#x (%s)\n", st, (st & 1u) ? "done" : "TIMEOUT");
++		}
++	}
+ 	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	printf("SWEET GPU: a6xx draw init done (addr modes, uche, cp pool/protect, hang detect)\n");
