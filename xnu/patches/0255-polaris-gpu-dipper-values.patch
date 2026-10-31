@@ -1,0 +1,54 @@
+From: polaris research
+Subject: [PATCH] 0255: dipper a630 values (UBWC NC modes, HWCG skip, SECVID byte offsets)
+
+The same-SoC Xiaomi 8 (dipper-xnu) driver programs different NC-mode values than
+the values this tree carried: RB/TPL1/SP_NC_MODE_CNTL = 4 (not 0x1005/0x45), UCHE_MODE_CNTL
+= 0x400000, RBBM_NC_MODE_CNTL = 0 and CP_PERFCTR_CP_SEL(0) = 0. Its a6xx_set_hwcg also
+skips the table when RBBM_CLOCK_CNTL already reads 0x8aa8aa02. Finally the SECVID
+trusted-buffer register is a byte offset (0x3d000) and must not go through the CP words
+helpers (which multiply by four); the CPU read is the quiet one. No SECVID_TRUST_CNTL
+read is added: on polaris an AHB read of the secure registers after CP_SET_SECURE_MODE can
+stall the interconnect (that path stays out of the default kernel).
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -2199,6 +2199,11 @@
+ static void
+ gpu_a630_hwcg(vm_offset_t core, vm_offset_t gmu)
+ {
++	uint32_t clk = gpu_rd_quiet(core, 0x2b8u);
++	if (clk == 0x8aa8aa02u) {
++		printf("SWEET GPU: HWCG already on; skipped\n");
++		return;
++	}
+ 	static const struct { uint32_t off, val; } hwcg[] = {
+ 			{ 0x002c0u, 0x22222222u },
+ 			{ 0x002c4u, 0x22222222u },
+@@ -8987,9 +8992,12 @@
+ 									{
+ 										int ubwc = 1;
+ 										if (!PE_parse_boot_argn("sweetubwc", &ubwc, sizeof(ubwc)) || ubwc) {
+-											gpu_wr_quiet(gpu, 0x23820u, 0x1005u);  /* RB_NC_MODE_CNTL */
+-											gpu_wr_quiet(gpu, 0x2d810u, 0x0045u);  /* TPL1_NC_MODE_CNTL */
+-											gpu_wr_quiet(gpu, 0x2b808u, 0x1005u);  /* SP_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x23820u, 0x0004u);  /* RB_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x2d810u, 0x0004u);  /* TPL1_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x2b808u, 0x0004u);  /* SP_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x3804u, 0x00400000u); /* UCHE_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x14d0u, 0x00000000u); /* RBBM_NC_MODE_CNTL */
++											gpu_wr_quiet(gpu, 0x2340u, 0x00000000u); /* CP_PERFCTR_CP_SEL(0) */
+ 											gpu_wr_quiet(gpu, 0x3e008u, 0x0u);     /* TSB trusted size */
+ 											printf("SWEET GPU: UBWC configured (bank bit 15, ubwc 2.0)\n");
+ 										}
+@@ -9025,9 +9033,9 @@
+ 									{
+ 										int trust = 0;
+ 										if (PE_parse_boot_argn("sweettrust", &trust, sizeof(trust)) && trust) {
+-											gpu_cp_wr(gpu, 0x3d000u, 0);       /* RBBM_SECVID_TRUST_CNTL */
++											gpu_wr_quiet(gpu, 0x3d000u, 0);   /* RBBM_SECVID_TRUST_CNTL */
+ 											printf("SWEET GPU: SECDIAG no-zap fallback: trust_cntl now %#x\n",
+-											    gpu_cp_rd(gpu, 0x3d000u));
++											    gpu_rd_quiet(gpu, 0x3d000u));
+ 										}
+ 									}
+ 									}
