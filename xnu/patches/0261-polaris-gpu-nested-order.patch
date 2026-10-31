@@ -1,0 +1,28 @@
+From: polaris research
+Subject: [PATCH] 0261: run the nested-IB tests after the BO arena exists
+
+The client-VA nested test asked gpu_bo_alloc before the BO arena was initialised by the
+bo self-test and reported "no BO". Move the whole nested-test block after gpu_bo_test().
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -9129,6 +9129,9 @@
+ 										ok = gpu_cp_ib_test(gpu, g, gmem_pa);
+ 									}
+ 									if (ok) {
++										ok = gpu_bo_test(gpu, g);
++									}
++									if (ok) {
+ 										int nested_mode = 0;
+ 
+ 										if (PE_parse_boot_argn("sweetnested", &nested_mode, sizeof(nested_mode)) &&
+@@ -9141,9 +9144,6 @@
+ 										}
+ 									}
+ 									if (ok) {
+-										ok = gpu_bo_test(gpu, g);
+-									}
+-									if (ok) {
+ 										if (gpu_diag_enabled("sweetreplayseq")) {
+ 										gpu_replay_seq(gpu, g);
+ 									}
