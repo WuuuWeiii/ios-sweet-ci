@@ -1,0 +1,80 @@
+From: polaris research
+Subject: [PATCH] 0260: nested IB test with the buffers in client VA (sweetnested=2)
+
+Our kernel nested-IB test (CP scratch VA) passes, but Mesa and the captured replay stop on
+a CP_INDIRECT_BUFFER whose target is a client BO. Build the same test with both command
+buffers in a gpu_bo_alloc BO so the client-VA nested path is exercised in isolation.
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1628,6 +1628,49 @@
+ 	return idle && fenced && *out == magic;
+ }
+ 
++/* 0260: the nested-IB test again, this time with both command buffers in a client BO that the
++ * user client's own page tables map (VA 0x8002xxxx). The kernel test in CP scratch passes; Mesa
++ * (and the captured replay) stop on a CP_INDIRECT_BUFFER whose target is a client BO, so this
++ * separates "nested buffers work" from "nested buffers in client VA work". */
++static bool
++gpu_nested_ib_client_test(vm_offset_t core, vm_offset_t blob)
++{
++	struct gpu_bo *bo = gpu_bo_alloc(0x4000);
++	volatile uint32_t *outer;
++	volatile uint32_t *nested;
++	volatile uint32_t *out;
++	const uint32_t magic = 0x4e325354u;     /* "N2ST" */
++	unsigned no = 0, nn = 0;
++	bool idle, fenced;
++
++	if (bo == NULL) {
++		printf("SWEET GPU: NESTED2: no BO\n");
++		return false;
++	}
++	outer = (volatile uint32_t *)bo->kva;
++	nested = (volatile uint32_t *)(bo->kva + 0x400);
++	out = (volatile uint32_t *)(bo->kva + 0x800);
++	*out = 0;
++	nested[nn++] = gpu_pkt7(GPU_CP_MEM_WRITE, 3);
++	nested[nn++] = (uint32_t)(bo->va + 0x800);
++	nested[nn++] = 0;
++	nested[nn++] = magic;
++	__asm__ volatile("dsb sy" ::: "memory");
++	outer[no++] = gpu_pkt7(GPU_CP_INDIRECT_BUFFER_PFE, 3);
++	outer[no++] = (uint32_t)(bo->va + 0x400);
++	outer[no++] = 0;
++	outer[no++] = nn;
++	__asm__ volatile("dsb sy" ::: "memory");
++	printf("SWEET GPU: NESTED2: bo va %#x outer %u dwords nested %u dwords (client VA)\n",
++	    bo->va, no, nn);
++	idle = gpu_cp_submit(core, blob, bo->va, no);
++	fenced = idle && gpu_cp_wait_fence(blob, gpu_cp_seq, 5000);
++	printf("SWEET GPU: NESTED2: ring %s fence %s; out %#x (want %#x); cp_int %#x sqe_pc %#x\n",
++	    idle ? "drained" : "STUCK", fenced ? "ok" : "STUCK", *out, magic,
++	    gpu_cp_rd(core, A6XX_CP_INTERRUPT_STATUS), gpu_cp_rd(core, 0x909u));
++	return idle && fenced && *out == magic;
++}
++
+ /* The first submission shaped like a userspace one: commands in a buffer, a
+  * fence at the end, both verified. */
+ static bool
+@@ -9085,10 +9128,17 @@
+ 									if (ok) {
+ 										ok = gpu_cp_ib_test(gpu, g, gmem_pa);
+ 									}
+-									if (ok && gpu_diag_enabled("sweetnested")) {
+-										bool nested_ok = gpu_nested_ib_test(gpu, g);
++									if (ok) {
++										int nested_mode = 0;
++
++										if (PE_parse_boot_argn("sweetnested", &nested_mode, sizeof(nested_mode)) &&
++										    nested_mode != 0) {
++											bool nested_ok = nested_mode >= 2 ?
++											    gpu_nested_ib_client_test(gpu, g) : gpu_nested_ib_test(gpu, g);
+ 
+-										printf("SWEET GPU: NESTED IB TEST %s\n", nested_ok ? "PASSED" : "FAILED");
++											printf("SWEET GPU: NESTED IB TEST %s (mode %d)\n",
++											    nested_ok ? "PASSED" : "FAILED", nested_mode);
++										}
+ 									}
+ 									if (ok) {
+ 										ok = gpu_bo_test(gpu, g);
