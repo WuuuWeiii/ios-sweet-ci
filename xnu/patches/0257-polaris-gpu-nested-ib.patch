@@ -1,0 +1,73 @@
+From: polaris research
+Subject: [PATCH] 0257: kernel-side nested command buffer test (sweetnested=1)
+
+Mesa's first real submission contains CP_INDIRECT_BUFFER and the SQE stops on it. Build the
+same shape from kernel memory (ring -> outer IB -> CP_INDIRECT_BUFFER -> nested IB ->
+CP_MEM_WRITE magic + CACHE_FLUSH_TS fence) so the question "does this CP take nested
+buffers?" can be answered without iOS userland timing.
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1584,6 +1584,50 @@
+ 	return false;
+ }
+ 
++/* 0257: does our CP take a nested command buffer? Mesa's first real submission has one
++ * CP_INDIRECT_BUFFER pointing at another buffer, and the SQE stops on it (CP_INT 0x80,
++ * SQE PC = 0x70bf8003). This test builds the same shape entirely in kernel memory so the
++ * answer does not depend on iOS userland timing: ring -> outer IB -> CP_INDIRECT_BUFFER ->
++ * nested IB -> CP_MEM_WRITE magic, with the usual CACHE_FLUSH_TS fence in the ring. */
++static bool
++gpu_nested_ib_test(vm_offset_t core, vm_offset_t blob)
++{
++	volatile uint32_t *outer = (volatile uint32_t *)(blob + GPU_CP_SCRATCH + 0x400);
++	volatile uint32_t *nested = (volatile uint32_t *)(blob + GPU_CP_SCRATCH + 0x800);
++	volatile uint32_t *out = (volatile uint32_t *)(blob + GPU_CP_SCRATCH + 0x380);
++	const uint32_t magic = 0x4e455354u;     /* "NEST" */
++	const uint32_t base = (uint32_t)GPU_VA_CP_SCRATCH;
++	unsigned no = 0, nn = 0;
++	bool idle, fenced;
++
++	*out = 0;
++	nested[nn++] = gpu_pkt7(GPU_CP_MEM_WRITE, 3);
++	nested[nn++] = base + 0x380;
++	nested[nn++] = 0;
++	nested[nn++] = magic;
++	nested[nn++] = gpu_pkt7(GPU_CP_EVENT_WRITE, 4);
++	nested[nn++] = GPU_CP_CACHE_FLUSH_TS;
++	nested[nn++] = base + GPU_CP_SCRATCH_FENCE;
++	nested[nn++] = 0;
++	nested[nn++] = 0x4e5354u;
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	outer[no++] = gpu_pkt7(GPU_CP_INDIRECT_BUFFER_PFE, 3);
++	outer[no++] = base + 0x800;
++	outer[no++] = 0;
++	outer[no++] = nn;
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	idle = gpu_cp_submit(core, blob, base + 0x400, no);
++	fenced = idle && gpu_cp_wait_fence(blob, gpu_cp_seq, 5000);
++	printf("SWEET GPU: NESTED IB TEST: outer %u dwords, nested %u dwords; ring %s, fence %s;"
++	    " out %#x (want %#x); cp_int %#x sqe_pc %#x rptr %u wptr %u\n",
++	    no, nn, idle ? "drained" : "STUCK", fenced ? "ok" : "STUCK", *out, magic,
++	    gpu_cp_rd(core, A6XX_CP_INTERRUPT_STATUS), gpu_cp_rd(core, 0x909u),
++	    gpu_cp_rd(core, 0x806u), gpu_cp_rd(core, 0x807u));
++	return idle && fenced && *out == magic;
++}
++
+ /* The first submission shaped like a userspace one: commands in a buffer, a
+  * fence at the end, both verified. */
+ static bool
+@@ -9041,6 +9085,11 @@
+ 									if (ok) {
+ 										ok = gpu_cp_ib_test(gpu, g, gmem_pa);
+ 									}
++									if (ok && gpu_diag_enabled("sweetnested")) {
++										bool nested_ok = gpu_nested_ib_test(gpu, g);
++
++										printf("SWEET GPU: NESTED IB TEST %s\n", nested_ok ? "PASSED" : "FAILED");
++									}
+ 									if (ok) {
+ 										ok = gpu_bo_test(gpu, g);
+ 									}
