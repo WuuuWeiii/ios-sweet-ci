@@ -1,0 +1,35 @@
+From: polaris research
+Subject: [PATCH] 0267: perfcounter SRAM init + wait inside the dipper hw_init path
+
+The same change as the 0263/0265 attempts, but placed inside bsd/dev/sweet_dipper_init.c -
+a file this series adds itself (0258) - so the patch context is exactly what the CI tree has.
+Runs with sweetdipper=1 sweetperfinit=1.
+
+--- a/bsd/dev/sweet_dipper_init.c
++++ b/bsd/dev/sweet_dipper_init.c
+@@ -289,4 +289,25 @@
+ 	printf("SWEET GPU: dipper init: %u writes, %u read back different; RBBM_STATUS %#x"
+ 	    " CP_STATUS1 %#x\n", dipper_writes, dipper_differs,
+ 	    DIPPER_RD(gpu, 0x210u), DIPPER_RD(gpu, 0x825u));
++	/* 0267: clear the performance counter SRAM and wait for it. UniXNU's A7XX ring documents
++	 * that without this wait a client IB can start while the SRAM is still clearing and the CP
++	 * stops on that IB's first packets - the same shape as our Mesa hang. sweetperfinit=1 only. */
++	{
++		int perfinit = 0;
++
++		if (PE_parse_boot_argn("sweetperfinit", &perfinit, sizeof(perfinit)) && perfinit) {
++			uint32_t st = 0;
++
++			DIPPER_WR(gpu, 0x1438u, 1u);            /* RBBM_PERFCTR_SRAM_INIT_CMD */
++			__asm__ volatile ("dsb sy" ::: "memory");
++			for (int i = 0; i < 200; i++) {
++				st = DIPPER_RD(gpu, 0x143cu);       /* RBBM_PERFCTR_SRAM_INIT_STATUS */
++				if (st & 1u) {
++					break;
++				}
++				for (volatile int d = 0; d < 1000; d++) { }
++			}
++			printf("SWEET GPU: PERFCTR SRAM INIT: status %#x (%s)\n", st, (st & 1u) ? "done" : "TIMEOUT");
++		}
++	}
+ }
