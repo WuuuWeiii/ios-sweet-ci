@@ -1,0 +1,49 @@
+From: polaris research
+Subject: [PATCH] 0262: boot-arg sweetreplayt4mask=<reg> NOPs one type4 register write in the replay
+
+All type7 masks still hang and live ibcut=8 completes, so the obstacle is one of the first
+type4 register writes. Replace writes to one chosen register with a CP_NOP of the same
+length in the captured stream, before relocation.
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1977,6 +1977,39 @@
+ 	for (unsigned i = 0; i < sizeof(replay_main) / sizeof(replay_main[0]); i++) {
+ 		*(uint32_t *)(base + 4u * i) = replay_main[i];
+ 	}
++	/* 0262: replace type4 register writes to one register with a CP_NOP of the same length, so
++	 * a single register write in the captured stream can be taken out of the picture. */
++	{
++		uint32_t t4mask = 0;
++
++		if (PE_parse_boot_argn("sweetreplayt4mask", &t4mask, sizeof(t4mask)) && t4mask != 0) {
++			uint32_t *m = (uint32_t *)base;
++			uint32_t patched = 0;
++
++			for (uint32_t i = 0; i + 1 < cut; ) {
++				uint32_t w = m[i];
++
++				if ((w >> 28) == 7 && ((w >> 24) & 0xF) == 0) {
++					i += 1 + (w & 0x3fff);
++				} else if ((w >> 28) == 4) {
++					uint32_t reg = (w >> 8) & 0x7ffff;
++					uint32_t cnt = w & 0x7f;
++
++					if (reg == t4mask) {
++						m[i] = gpu_pkt7(GPU_CP_NOP, cnt);
++						for (uint32_t k = 1; k <= cnt; k++) {
++							m[i + k] = 0;
++						}
++						patched++;
++					}
++					i += 1 + cnt;
++				} else {
++					i++;
++				}
++			}
++			printf("SWEET GPU: REPLAY: t4mask reg %#x patched %u\n", t4mask, patched);
++		}
++	}
+ 	const uint32_t *ibs[5] = { replay_ib0, replay_ib1, replay_ib2, replay_ib3, replay_ib4 };
+ 	for (unsigned i = 0; i < 5; i++) {
+ 		for (uint32_t k = 0; k < ib_size[i]; k++) {
