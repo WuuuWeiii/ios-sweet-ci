@@ -1,0 +1,38 @@
+From: polaris research
+Subject: [PATCH] 0259: boot-arg sweet3dwrite=1 writes and reads 3D core registers
+
+The captured Mesa stream writes RB_DBG_ECO_CNTL = 0x04100000 early and the CP never
+returns. If the 3D clocks / GX power domain are not really on this write stalls the bus.
+Write and read the same register during our own bring-up to tell those apart.
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1192,6 +1192,28 @@
+ 			}
+ 		}
+ 		gpu_wr_quiet(core, base + 31u * 4, 0x80011c00u);   /* last span: infinite */
++	/* 0259: prove the 3D core answers before any user space stream arrives. Mesa's first
++	 * real submission writes RB_DBG_ECO_CNTL = 0x04100000 and then waits; if the 3D clocks or
++	 * the GX/RBBM power domain are not really on, such a write stalls the interconnect and the
++	 * CP never comes back. sweet3dwrite=1 writes and reads the same register here. */
++	{
++		int probe = 0;
++
++		if (PE_parse_boot_argn("sweet3dwrite", &probe, sizeof(probe)) && probe) {
++			uint32_t back;
++
++			gpu_wr_quiet(core, 0x23810u, 0x04100000u);     /* RB_DBG_ECO_CNTL */
++			__asm__ volatile("dsb sy" ::: "memory");
++			back = gpu_rd_quiet(core, 0x23810u);
++			printf("SWEET GPU: 3D WRITE PROBE: RB_DBG_ECO_CNTL wrote %#x read %#x (%s)\n",
++			    0x04100000u, back, back == 0x04100000u ? "ok" : "DIFFERS");
++			gpu_wr_quiet(core, 0x2b810u, 0x00000008u);     /* the second 3D write of Mesa's stream */
++			__asm__ volatile("dsb sy" ::: "memory");
++			back = gpu_rd_quiet(core, 0x2b810u);
++			printf("SWEET GPU: 3D WRITE PROBE 2: wrote %#x read %#x (%s)\n",
++			    0x00000008u, back, back == 0x00000008u ? "ok" : "DIFFERS");
++		}
++	}
+ 	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	printf("SWEET GPU: a6xx draw init done (addr modes, uche, cp pool/protect, hang detect)\n");
