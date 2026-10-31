@@ -1,0 +1,332 @@
+From: polaris research
+Subject: [PATCH] 0258: dipper-xnu a630 hw_init table behind sweetdipper=1
+
+Replay dipper-xnu's 180-entry a630 hardware-init table in our driver: ADDRESS, HWCG (only
+when RBBM_CLOCK_CNTL is not 0x8aa8aa02), HWCG_COMMIT, CORE, the GMU busy/power counters and
+the whole PROTECT range, in dipper's order. SECVID and the IRQ entry stay out (zap owns
+SECVID; our driver polls). Only with sweetdipper=1; the default kernel is unchanged.
+
+--- /dev/null
++++ b/bsd/dev/sweet_dipper_init.c
+@@ -0,0 +1,292 @@
++/*
++ * 0267: dipper-xnu a630 hardware initialisation table (mi8_a630_hw_init.inc), replayed from
++ * our own driver: ADDRESS, HWCG (only when RBBM_CLOCK_CNTL is not 0x8aa8aa02), HWCG_COMMIT,
++ * CORE, the GMU busy/power counters and PROTECT. SECVID and the IRQ entry stay out: the zap
++ * owns SECVID on polaris (writing those twice can reset the phone) and our driver polls.
++ * Generated from bsd/dev/mi8_a630_hw_init.inc; reg is a word offset from the GPU base.
++ */
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++#include <sys/systm.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++
++#define DIPPER_WR(g, w, v) (*(volatile uint32_t *)((g) + 4u * (w)) = (v))
++#define DIPPER_RD(g, w)    (*(volatile uint32_t *)((g) + 4u * (w)))
++
++struct dipper_init_entry { uint32_t reg; uint32_t value; };
++static const struct dipper_init_entry dipper_a630_init[] = {
++	{ 0x00842u, 0x00000001u },   /* CP_ADDR_MODE_CNTL */
++	{ 0x00c01u, 0x00000001u },   /* VSC_ADDR_MODE_CNTL */
++	{ 0x08601u, 0x00000001u },   /* GRAS_ADDR_MODE_CNTL */
++	{ 0x08e05u, 0x00000001u },   /* RB_ADDR_MODE_CNTL */
++	{ 0x09e01u, 0x00000001u },   /* PC_ADDR_MODE_CNTL */
++	{ 0x0be05u, 0x00000001u },   /* HLSQ_ADDR_MODE_CNTL */
++	{ 0x0a601u, 0x00000001u },   /* VFD_ADDR_MODE_CNTL */
++	{ 0x09601u, 0x00000001u },   /* VPC_ADDR_MODE_CNTL */
++	{ 0x00e00u, 0x00000001u },   /* UCHE_ADDR_MODE_CNTL */
++	{ 0x0ae01u, 0x00000001u },   /* SP_ADDR_MODE_CNTL */
++	{ 0x0b601u, 0x00000001u },   /* TPL1_ADDR_MODE_CNTL */
++	{ 0x000b0u, 0x22222222u },   /* RBBM_CLOCK_CNTL_SP0 */
++	{ 0x000b1u, 0x22222222u },   /* RBBM_CLOCK_CNTL_SP1 */
++	{ 0x000b2u, 0x22222222u },   /* RBBM_CLOCK_CNTL_SP2 */
++	{ 0x000b3u, 0x22222222u },   /* RBBM_CLOCK_CNTL_SP3 */
++	{ 0x000b4u, 0x02022220u },   /* RBBM_CLOCK_CNTL2_SP0 */
++	{ 0x000b5u, 0x02022220u },   /* RBBM_CLOCK_CNTL2_SP1 */
++	{ 0x000b6u, 0x02022220u },   /* RBBM_CLOCK_CNTL2_SP2 */
++	{ 0x000b7u, 0x02022220u },   /* RBBM_CLOCK_CNTL2_SP3 */
++	{ 0x000b8u, 0x00000080u },   /* RBBM_CLOCK_DELAY_SP0 */
++	{ 0x000b9u, 0x00000080u },   /* RBBM_CLOCK_DELAY_SP1 */
++	{ 0x000bau, 0x00000080u },   /* RBBM_CLOCK_DELAY_SP2 */
++	{ 0x000bbu, 0x00000080u },   /* RBBM_CLOCK_DELAY_SP3 */
++	{ 0x000bcu, 0x0000f3cfu },   /* RBBM_CLOCK_HYST_SP0 */
++	{ 0x000bdu, 0x0000f3cfu },   /* RBBM_CLOCK_HYST_SP1 */
++	{ 0x000beu, 0x0000f3cfu },   /* RBBM_CLOCK_HYST_SP2 */
++	{ 0x000bfu, 0x0000f3cfu },   /* RBBM_CLOCK_HYST_SP3 */
++	{ 0x000c0u, 0x02222222u },   /* RBBM_CLOCK_CNTL_TP0 */
++	{ 0x000c1u, 0x02222222u },   /* RBBM_CLOCK_CNTL_TP1 */
++	{ 0x000c2u, 0x02222222u },   /* RBBM_CLOCK_CNTL_TP2 */
++	{ 0x000c3u, 0x02222222u },   /* RBBM_CLOCK_CNTL_TP3 */
++	{ 0x000c4u, 0x22222222u },   /* RBBM_CLOCK_CNTL2_TP0 */
++	{ 0x000c5u, 0x22222222u },   /* RBBM_CLOCK_CNTL2_TP1 */
++	{ 0x000c6u, 0x22222222u },   /* RBBM_CLOCK_CNTL2_TP2 */
++	{ 0x000c7u, 0x22222222u },   /* RBBM_CLOCK_CNTL2_TP3 */
++	{ 0x000c8u, 0x22222222u },   /* RBBM_CLOCK_CNTL3_TP0 */
++	{ 0x000c9u, 0x22222222u },   /* RBBM_CLOCK_CNTL3_TP1 */
++	{ 0x000cau, 0x22222222u },   /* RBBM_CLOCK_CNTL3_TP2 */
++	{ 0x000cbu, 0x22222222u },   /* RBBM_CLOCK_CNTL3_TP3 */
++	{ 0x000ccu, 0x00022222u },   /* RBBM_CLOCK_CNTL4_TP0 */
++	{ 0x000cdu, 0x00022222u },   /* RBBM_CLOCK_CNTL4_TP1 */
++	{ 0x000ceu, 0x00022222u },   /* RBBM_CLOCK_CNTL4_TP2 */
++	{ 0x000cfu, 0x00022222u },   /* RBBM_CLOCK_CNTL4_TP3 */
++	{ 0x000e0u, 0x77777777u },   /* RBBM_CLOCK_HYST_TP0 */
++	{ 0x000e1u, 0x77777777u },   /* RBBM_CLOCK_HYST_TP1 */
++	{ 0x000e2u, 0x77777777u },   /* RBBM_CLOCK_HYST_TP2 */
++	{ 0x000e3u, 0x77777777u },   /* RBBM_CLOCK_HYST_TP3 */
++	{ 0x000e4u, 0x77777777u },   /* RBBM_CLOCK_HYST2_TP0 */
++	{ 0x000e5u, 0x77777777u },   /* RBBM_CLOCK_HYST2_TP1 */
++	{ 0x000e6u, 0x77777777u },   /* RBBM_CLOCK_HYST2_TP2 */
++	{ 0x000e7u, 0x77777777u },   /* RBBM_CLOCK_HYST2_TP3 */
++	{ 0x000e8u, 0x77777777u },   /* RBBM_CLOCK_HYST3_TP0 */
++	{ 0x000e9u, 0x77777777u },   /* RBBM_CLOCK_HYST3_TP1 */
++	{ 0x000eau, 0x77777777u },   /* RBBM_CLOCK_HYST3_TP2 */
++	{ 0x000ebu, 0x77777777u },   /* RBBM_CLOCK_HYST3_TP3 */
++	{ 0x000ecu, 0x00077777u },   /* RBBM_CLOCK_HYST4_TP0 */
++	{ 0x000edu, 0x00077777u },   /* RBBM_CLOCK_HYST4_TP1 */
++	{ 0x000eeu, 0x00077777u },   /* RBBM_CLOCK_HYST4_TP2 */
++	{ 0x000efu, 0x00077777u },   /* RBBM_CLOCK_HYST4_TP3 */
++	{ 0x000d0u, 0x11111111u },   /* RBBM_CLOCK_DELAY_TP0 */
++	{ 0x000d1u, 0x11111111u },   /* RBBM_CLOCK_DELAY_TP1 */
++	{ 0x000d2u, 0x11111111u },   /* RBBM_CLOCK_DELAY_TP2 */
++	{ 0x000d3u, 0x11111111u },   /* RBBM_CLOCK_DELAY_TP3 */
++	{ 0x000d4u, 0x11111111u },   /* RBBM_CLOCK_DELAY2_TP0 */
++	{ 0x000d5u, 0x11111111u },   /* RBBM_CLOCK_DELAY2_TP1 */
++	{ 0x000d6u, 0x11111111u },   /* RBBM_CLOCK_DELAY2_TP2 */
++	{ 0x000d7u, 0x11111111u },   /* RBBM_CLOCK_DELAY2_TP3 */
++	{ 0x000d8u, 0x11111111u },   /* RBBM_CLOCK_DELAY3_TP0 */
++	{ 0x000d9u, 0x11111111u },   /* RBBM_CLOCK_DELAY3_TP1 */
++	{ 0x000dau, 0x11111111u },   /* RBBM_CLOCK_DELAY3_TP2 */
++	{ 0x000dbu, 0x11111111u },   /* RBBM_CLOCK_DELAY3_TP3 */
++	{ 0x000dcu, 0x00011111u },   /* RBBM_CLOCK_DELAY4_TP0 */
++	{ 0x000ddu, 0x00011111u },   /* RBBM_CLOCK_DELAY4_TP1 */
++	{ 0x000deu, 0x00011111u },   /* RBBM_CLOCK_DELAY4_TP2 */
++	{ 0x000dfu, 0x00011111u },   /* RBBM_CLOCK_DELAY4_TP3 */
++	{ 0x0010bu, 0x22222222u },   /* RBBM_CLOCK_CNTL_UCHE */
++	{ 0x0010cu, 0x22222222u },   /* RBBM_CLOCK_CNTL2_UCHE */
++	{ 0x0010du, 0x22222222u },   /* RBBM_CLOCK_CNTL3_UCHE */
++	{ 0x0010eu, 0x00222222u },   /* RBBM_CLOCK_CNTL4_UCHE */
++	{ 0x00110u, 0x00000004u },   /* RBBM_CLOCK_HYST_UCHE */
++	{ 0x0010fu, 0x00000002u },   /* RBBM_CLOCK_DELAY_UCHE */
++	{ 0x000f0u, 0x22222222u },   /* RBBM_CLOCK_CNTL_RB0 */
++	{ 0x000f1u, 0x22222222u },   /* RBBM_CLOCK_CNTL_RB1 */
++	{ 0x000f2u, 0x22222222u },   /* RBBM_CLOCK_CNTL_RB2 */
++	{ 0x000f3u, 0x22222222u },   /* RBBM_CLOCK_CNTL_RB3 */
++	{ 0x000f4u, 0x00002222u },   /* RBBM_CLOCK_CNTL2_RB0 */
++	{ 0x000f5u, 0x00002222u },   /* RBBM_CLOCK_CNTL2_RB1 */
++	{ 0x000f6u, 0x00002222u },   /* RBBM_CLOCK_CNTL2_RB2 */
++	{ 0x000f7u, 0x00002222u },   /* RBBM_CLOCK_CNTL2_RB3 */
++	{ 0x000f8u, 0x00002220u },   /* RBBM_CLOCK_CNTL_CCU0 */
++	{ 0x000f9u, 0x00002220u },   /* RBBM_CLOCK_CNTL_CCU1 */
++	{ 0x000fau, 0x00002220u },   /* RBBM_CLOCK_CNTL_CCU2 */
++	{ 0x000fbu, 0x00002220u },   /* RBBM_CLOCK_CNTL_CCU3 */
++	{ 0x00100u, 0x00040f00u },   /* RBBM_CLOCK_HYST_RB_CCU0 */
++	{ 0x00101u, 0x00040f00u },   /* RBBM_CLOCK_HYST_RB_CCU1 */
++	{ 0x00102u, 0x00040f00u },   /* RBBM_CLOCK_HYST_RB_CCU2 */
++	{ 0x00103u, 0x00040f00u },   /* RBBM_CLOCK_HYST_RB_CCU3 */
++	{ 0x00104u, 0x05022022u },   /* RBBM_CLOCK_CNTL_RAC */
++	{ 0x00105u, 0x00005555u },   /* RBBM_CLOCK_CNTL2_RAC */
++	{ 0x00106u, 0x00000011u },   /* RBBM_CLOCK_DELAY_RAC */
++	{ 0x00107u, 0x00445044u },   /* RBBM_CLOCK_HYST_RAC */
++	{ 0x00108u, 0x04222222u },   /* RBBM_CLOCK_CNTL_TSE_RAS_RBBM */
++	{ 0x00114u, 0x00222222u },   /* RBBM_CLOCK_MODE_GPC */
++	{ 0x00111u, 0x00002222u },   /* RBBM_CLOCK_MODE_VFD */
++	{ 0x0010au, 0x00000000u },   /* RBBM_CLOCK_HYST_TSE_RAS_RBBM */
++	{ 0x00116u, 0x04104004u },   /* RBBM_CLOCK_HYST_GPC */
++	{ 0x00113u, 0x00000000u },   /* RBBM_CLOCK_HYST_VFD */
++	{ 0x0011cu, 0x00000000u },   /* RBBM_CLOCK_DELAY_HLSQ */
++	{ 0x00109u, 0x00004000u },   /* RBBM_CLOCK_DELAY_TSE_RAS_RBBM */
++	{ 0x00115u, 0x00000200u },   /* RBBM_CLOCK_DELAY_GPC */
++	{ 0x00112u, 0x00002222u },   /* RBBM_CLOCK_DELAY_VFD */
++	{ 0x00117u, 0x00000002u },   /* RBBM_CLOCK_DELAY_HLSQ_2 */
++	{ 0x0011bu, 0x00002222u },   /* RBBM_CLOCK_MODE_HLSQ */
++	{ 0x00118u, 0x00000222u },   /* RBBM_CLOCK_CNTL_GMU_GX */
++	{ 0x00119u, 0x00000111u },   /* RBBM_CLOCK_DELAY_GMU_GX */
++	{ 0x0011au, 0x00000555u },   /* RBBM_CLOCK_HYST_GMU_GX */
++	{ 0x000aeu, 0x8aa8aa02u },   /* RBBM_CLOCK_CNTL */
++	{ 0x00010u, 0x00000003u },   /* RBBM_VBIF_CLIENT_QOS_CNTL */
++	{ 0x0302au, 0x00000009u },   /* VBIF_GATE_OFF_WRREQ_EN */
++	{ 0x0050bu, 0xffffffffu },   /* RBBM_PERFCTR_GPU_BUSY_MASKED */
++	{ 0x00e05u, 0xffffffc0u },   /* UCHE_WRITE_RANGE_MAX_LO */
++	{ 0x00e06u, 0x0001ffffu },   /* UCHE_WRITE_RANGE_MAX_HI */
++	{ 0x00e09u, 0xfffff000u },   /* UCHE_TRAP_BASE_LO */
++	{ 0x00e0au, 0x0001ffffu },   /* UCHE_TRAP_BASE_HI */
++	{ 0x00e07u, 0xfffff000u },   /* UCHE_WRITE_THRU_BASE_LO */
++	{ 0x00e08u, 0x0001ffffu },   /* UCHE_WRITE_THRU_BASE_HI */
++	{ 0x00e0bu, 0x00100000u },   /* UCHE_GMEM_RANGE_MIN_LO */
++	{ 0x00e0cu, 0x00000000u },   /* UCHE_GMEM_RANGE_MIN_HI */
++	{ 0x00e0du, 0x001fffffu },   /* UCHE_GMEM_RANGE_MAX_LO */
++	{ 0x00e0eu, 0x00000000u },   /* UCHE_GMEM_RANGE_MAX_HI */
++	{ 0x00e18u, 0x00000804u },   /* UCHE_FILTER_CNTL */
++	{ 0x00e17u, 0x00000004u },   /* UCHE_CACHE_WAYS */
++	{ 0x008c2u, 0x010000c0u },   /* CP_ROQ_THRESHOLDS_2 */
++	{ 0x008c1u, 0x8040362cu },   /* CP_ROQ_THRESHOLDS_1 */
++	{ 0x008c3u, 0x00000080u },   /* CP_MEM_POOL_SIZE */
++	{ 0x09e00u, 0x00180000u },   /* PC_DBG_ECO_CNTL */
++	{ 0x0098du, 0x00000001u },   /* CP_AHB_CNTL */
++	{ 0x00500u, 0x00000001u },   /* RBBM_PERFCTR_CNTL */
++	{ 0x008d0u, 0x00000000u },   /* CP_PERFCTR_CP_SEL(0) */
++	{ 0x08e08u, 0x00000004u },   /* RB_NC_MODE_CNTL */
++	{ 0x0b604u, 0x00000004u },   /* TPL1_NC_MODE_CNTL */
++	{ 0x0ae02u, 0x00000004u },   /* SP_NC_MODE_CNTL */
++	{ 0x00e01u, 0x00400000u },   /* UCHE_MODE_CNTL */
++	{ 0x00534u, 0x00000000u },   /* RBBM_NC_MODE_CNTL */
++	{ 0x0001fu, 0x401fffffu },   /* RBBM_INTERFACE_HANG_INT_CNTL */
++	{ 0x00e19u, 0x00000081u },   /* UCHE_CLIENT_PF */
++	{ 0x0084fu, 0x0000000bu },   /* CP_PROTECT_CNTL */
++	{ 0x00850u, 0x13fc0000u },   /* CP_PROTECT(0) */
++	{ 0x00851u, 0x00140501u },   /* CP_PROTECT(1) */
++	{ 0x00852u, 0x0bd0050bu },   /* CP_PROTECT(2) */
++	{ 0x00853u, 0x8000050eu },   /* CP_PROTECT(3) */
++	{ 0x00854u, 0x80000510u },   /* CP_PROTECT(4) */
++	{ 0x00855u, 0x80000534u },   /* CP_PROTECT(5) */
++	{ 0x00856u, 0x82080800u },   /* CP_PROTECT(6) */
++	{ 0x00857u, 0x802008a0u },   /* CP_PROTECT(7) */
++	{ 0x00858u, 0x809008abu },   /* CP_PROTECT(8) */
++	{ 0x00859u, 0x02b808deu },   /* CP_PROTECT(9) */
++	{ 0x0085au, 0x81340900u },   /* CP_PROTECT(10) */
++	{ 0x0085bu, 0x89c8098du },   /* CP_PROTECT(11) */
++	{ 0x0085cu, 0x80040e00u },   /* CP_PROTECT(12) */
++	{ 0x0085du, 0x80300e03u },   /* CP_PROTECT(13) */
++	{ 0x0085eu, 0x830c3c00u },   /* CP_PROTECT(14) */
++	{ 0x0085fu, 0x7ffc3cc4u },   /* CP_PROTECT(15) */
++	{ 0x00860u, 0x873c8630u },   /* CP_PROTECT(16) */
++	{ 0x00861u, 0x80008e00u },   /* CP_PROTECT(17) */
++	{ 0x00862u, 0x80008e08u },   /* CP_PROTECT(18) */
++	{ 0x00863u, 0x807c8e50u },   /* CP_PROTECT(19) */
++	{ 0x00864u, 0x876c9624u },   /* CP_PROTECT(20) */
++	{ 0x00865u, 0x80049e70u },   /* CP_PROTECT(21) */
++	{ 0x00866u, 0x861c9e78u },   /* CP_PROTECT(22) */
++	{ 0x00867u, 0x873ca630u },   /* CP_PROTECT(23) */
++	{ 0x00868u, 0x8000ae02u },   /* CP_PROTECT(24) */
++	{ 0x00869u, 0x8cbcae50u },   /* CP_PROTECT(25) */
++	{ 0x0086au, 0x8000b604u },   /* CP_PROTECT(26) */
++	{ 0x0086bu, 0x8004be02u },   /* CP_PROTECT(27) */
++	{ 0x0086cu, 0xdf7cbe20u },   /* CP_PROTECT(28) */
++	{ 0x0086du, 0xaffcf000u },   /* CP_PROTECT(29) */
++	{ 0x0086eu, 0x7ffcfc00u },   /* CP_PROTECT(30) */
++	{ 0x0086fu, 0x80011c00u },   /* CP_PROTECT(31) */
++	{ 0x00038u, 0x03d0e242u },   /* RBBM_INT_0_MASK */
++};
++
++#define DIPPER_ADDRESS_BEGIN      0
++#define DIPPER_ADDRESS_END        11
++#define DIPPER_HWCG_BEGIN         11
++#define DIPPER_HWCG_END           116
++#define DIPPER_HWCG_COMMIT_BEGIN  116
++#define DIPPER_HWCG_COMMIT_END    117
++#define DIPPER_CORE_BEGIN         117
++#define DIPPER_CORE_END           146
++#define DIPPER_PROTECT_BEGIN      146
++#define DIPPER_PROTECT_END        179
++
++static uint32_t dipper_writes, dipper_differs;
++
++static void
++dipper_put(vm_offset_t gpu, uint32_t word, uint32_t value)
++{
++	uint32_t back;
++
++	DIPPER_WR(gpu, word, value);
++	__asm__ volatile ("dsb sy" ::: "memory");
++	back = DIPPER_RD(gpu, word);
++	if (back != value && dipper_differs++ < 8) {
++		printf("SWEET GPU: dipper init word %#x wrote %#010x read %#010x\n", word, value, back);
++	}
++	dipper_writes++;
++}
++
++static void
++dipper_range(vm_offset_t gpu, const char *what, uint32_t first, uint32_t end)
++{
++	uint32_t before = dipper_differs;
++
++	for (uint32_t i = first; i < end; i++) {
++		dipper_put(gpu, dipper_a630_init[i].reg, dipper_a630_init[i].value);
++	}
++	printf("SWEET GPU: dipper init %s: %u entries, %u read back different\n",
++	    what, end - first, dipper_differs - before);
++}
++
++/* GMU word offsets used by Linux's a6xx_set_hwcg and the busy/power counter block. */
++#define DIPPER_GMU_AO_CGC_MODE_W      0x9309u
++#define DIPPER_GMU_AO_CGC_DELAY_W     0x930au
++#define DIPPER_GMU_AO_CGC_HYST_W      0x930bu
++#define DIPPER_GMU_AO_BUSY_MASK_W     0x930eu
++#define DIPPER_GMU_GX_SPTPRAC_CLK_W   0x0080u
++#define DIPPER_GMU_PWR_CNT_ENABLE_W   0x5040u
++#define DIPPER_GMU_PWR_CNT_SELECT0_W  0x5041u
++
++void
++sweet_dipper_hw_init(vm_offset_t gpu, vm_offset_t gmu)
++{
++	uint32_t clock_cntl, v;
++
++	dipper_writes = 0;
++	dipper_differs = 0;
++	printf("SWEET GPU: dipper-xnu hw_init table: %u entries (ADDRESS %u..%u, HWCG %u..%u,"
++	    " CORE %u..%u, PROTECT %u..%u; SECVID and IRQ skipped)\n",
++	    (uint32_t)(sizeof(dipper_a630_init) / sizeof(dipper_a630_init[0])),
++	    DIPPER_ADDRESS_BEGIN, DIPPER_ADDRESS_END, DIPPER_HWCG_BEGIN, DIPPER_HWCG_END,
++	    DIPPER_CORE_BEGIN, DIPPER_CORE_END, DIPPER_PROTECT_BEGIN, DIPPER_PROTECT_END);
++
++	dipper_range(gpu, "ADDRESS", DIPPER_ADDRESS_BEGIN, DIPPER_ADDRESS_END);
++
++	/* a6xx_set_hwcg: GMU gating mode/delay/hysteresis, then read RBBM_CLOCK_CNTL */
++	DIPPER_WR(gmu, DIPPER_GMU_AO_CGC_MODE_W, 0x20202u);
++	DIPPER_WR(gmu, DIPPER_GMU_AO_CGC_DELAY_W, 0x10111u);
++	DIPPER_WR(gmu, DIPPER_GMU_AO_CGC_HYST_W, 0x5555u);
++	clock_cntl = DIPPER_RD(gpu, 0xaeu);
++	printf("SWEET GPU: dipper init RBBM_CLOCK_CNTL %#010x\n", clock_cntl);
++	if (clock_cntl == 0x8aa8aa02u) {
++		printf("SWEET GPU: dipper init: HWCG already on, HWCG/HWCG_COMMIT skipped\n");
++	} else {
++		v = DIPPER_RD(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W);
++		DIPPER_WR(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W, v & ~1u);
++		dipper_range(gpu, "HWCG", DIPPER_HWCG_BEGIN, DIPPER_HWCG_END);
++		DIPPER_WR(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W, DIPPER_RD(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W) | 1u);
++		dipper_range(gpu, "HWCG_COMMIT", DIPPER_HWCG_COMMIT_BEGIN, DIPPER_HWCG_COMMIT_END);
++	}
++
++	dipper_range(gpu, "CORE", DIPPER_CORE_BEGIN, DIPPER_CORE_END);
++
++	/* hw_init:1369-1373: GMU busy mask and power counters */
++	DIPPER_WR(gmu, DIPPER_GMU_AO_BUSY_MASK_W, 0xff000000u);
++	v = DIPPER_RD(gmu, DIPPER_GMU_PWR_CNT_SELECT0_W);
++	DIPPER_WR(gmu, DIPPER_GMU_PWR_CNT_SELECT0_W, (v & ~0xffu) | (1u << 5));
++	DIPPER_WR(gmu, DIPPER_GMU_PWR_CNT_ENABLE_W, 1u);
++
++	dipper_range(gpu, "PROTECT", DIPPER_PROTECT_BEGIN, DIPPER_PROTECT_END);
++	printf("SWEET GPU: dipper init: %u writes, %u read back different; RBBM_STATUS %#x"
++	    " CP_STATUS1 %#x\n", dipper_writes, dipper_differs,
++	    DIPPER_RD(gpu, 0x210u), DIPPER_RD(gpu, 0x825u));
++}
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -121,6 +121,7 @@
+ bsd/dev/polaris_gpu_cm3.c		standard
+ bsd/dev/polaris_gpu_smmu.c		standard
+ bsd/dev/sweet_gpu.c			standard
++bsd/dev/sweet_dipper_init.c		standard
+ bsd/dev/mem.c				standard
+ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -8976,6 +8976,16 @@
+ 								gpu_ring_flush(gpu, gpu_cp_wptr);
+ 								if (gpu_ring_wait_idle(gpu, "CP_SET_SECURE_MODE 0")) {
+ 									gpu_a6xx_draw_init(gpu);
++					{
++						int dipper = 0;
++
++						if (PE_parse_boot_argn("sweetdipper", &dipper, sizeof(dipper)) && dipper) {
++							extern void sweet_dipper_hw_init(vm_offset_t, vm_offset_t);
++
++							printf("SWEET GPU: --- dipper-xnu hw_init table (sweetdipper=1)\n");
++							sweet_dipper_hw_init(gpu, gmu);
++						}
++					}
+ 									if (gpu_diag_enabled("sweetblockprobe")) {
+ 										gpu_block_probe(gpu);
+ 									}
