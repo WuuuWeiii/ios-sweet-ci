@@ -1,0 +1,37 @@
+From: polaris research
+Subject: [PATCH] 0264: boot-arg sweetperfinit=1 clears and waits for the perfcounter SRAM
+
+UniXNU's A740 ring documents that without waiting for RBBM_PERFCTR_SRAM_INIT_STATUS a client
+IB can start before the SRAM has cleared and the CP stops on that IB's first packets.
+Emit the init write and the bounded wait during our hw_init, behind a boot argument.
+
+--- a/bsd/dev/sweet_gpu.c
++++ b/bsd/dev/sweet_gpu.c
+@@ -1192,6 +1192,27 @@
+ 			}
+ 		}
+ 		gpu_wr_quiet(core, base + 31u * 4, 0x80011c00u);   /* last span: infinite */
++	/* 0263: clear the performance counter SRAM and wait for it, the sequence UniXNU's A740 ring
++	 * calls out: without the wait a client IB can start while the SRAM is still clearing and the
++	 * CP stops on the first packets of that IB (observed on their hardware, same shape as ours). */
++	{
++		int perfinit = 0;
++
++		if (PE_parse_boot_argn("sweetperfinit", &perfinit, sizeof(perfinit)) && perfinit) {
++			uint32_t st = 0;
++
++			gpu_wr_quiet(core, 0x1438u, 1u);        /* RBBM_PERFCTR_SRAM_INIT_CMD */
++			__asm__ volatile("dsb sy" ::: "memory");
++			for (int i = 0; i < 200; i++) {
++				st = gpu_rd_quiet(core, 0x143cu);   /* RBBM_PERFCTR_SRAM_INIT_STATUS */
++				if (st & 1u) {
++					break;
++				}
++				gpu_wait_ms(1);
++			}
++			printf("SWEET GPU: PERFCTR SRAM INIT: status %#x (%s)\n", st, (st & 1u) ? "done" : "TIMEOUT");
++		}
++	}
+ 	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	printf("SWEET GPU: a6xx draw init done (addr modes, uche, cp pool/protect, hang detect)\n");
