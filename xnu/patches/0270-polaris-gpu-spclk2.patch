@@ -1,0 +1,32 @@
+From: polaris research
+Subject: [PATCH] 0270: enable the GMU SP/HLSQ clock bit (sweetspclk=1)
+
+HLSQ_INVALIDATE_CMD (0xbb08) is the exact instruction the Linux-SQE replay dies on; both
+Bergamota and UniXNU enable the GMU SPTPRAC clock bit before touching SP/HLSQ. Insert
+the enable away from the earlier patch hunks so the strict CI applier accepts it.
+
+--- a/bsd/dev/sweet_dipper_init.c
++++ b/bsd/dev/sweet_dipper_init.c
+@@ -259,6 +259,22 @@
+ 	    DIPPER_ADDRESS_BEGIN, DIPPER_ADDRESS_END, DIPPER_HWCG_BEGIN, DIPPER_HWCG_END,
+ 	    DIPPER_CORE_BEGIN, DIPPER_CORE_END, DIPPER_PROTECT_BEGIN, DIPPER_PROTECT_END);
+ 
++	/* 0270: enable the SP/HLSQ clock the GMU exposes (word 0x80 bit 0). Bergamota and the
++	 * UniXNU A740 driver set this after SPTPRAC power-up; without it writes to SP/HLSQ
++	 * registers (HLSQ_INVALIDATE_CMD 0xbb08) can hang the bus. sweetspclk=1 only. */
++	{
++		int spc = 0;
++
++		if (PE_parse_boot_argn("sweetspclk", &spc, sizeof(spc)) && spc) {
++			uint32_t v = DIPPER_RD(gmu, 0x0080u);
++
++			DIPPER_WR(gmu, 0x0080u, v | 1u);
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET GPU: SPTPRAC clock control %#x -> %#x\n", v, DIPPER_RD(gmu, 0x0080u));
++			printf("SWEET GPU: SPTPRAC power control %#x, status %#x\n",
++			    DIPPER_RD(gmu, 0x0081u), DIPPER_RD(gmu, 0x50d0u));
++		}
++	}
+ 	dipper_range(gpu, "ADDRESS", DIPPER_ADDRESS_BEGIN, DIPPER_ADDRESS_END);
+ 
+ 	/* a6xx_set_hwcg: GMU gating mode/delay/hysteresis, then read RBBM_CLOCK_CNTL */
