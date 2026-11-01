@@ -1,0 +1,36 @@
+From: polaris research
+Subject: [PATCH] 0271: CP_PROTECT probes for HLSQ (sweetallowhlsq=1 / sweetnoprotect=1)
+
+The Linux-SQE replay dies on HLSQ_INVALIDATE_CMD (reg 0xbb08). The decoded CP_PROTECT
+table does not cover that range. Expand slot 26 to the HLSQ block, or disable protection
+entirely, so the next boot can tell whether the write faults in CP protection.
+
+--- a/bsd/dev/sweet_dipper_init.c
++++ b/bsd/dev/sweet_dipper_init.c
+@@ -286,6 +286,26 @@
+ 	DIPPER_WR(gmu, DIPPER_GMU_PWR_CNT_ENABLE_W, 1u);
+ 
+ 	dipper_range(gpu, "PROTECT", DIPPER_PROTECT_BEGIN, DIPPER_PROTECT_END);
++	/* 0271: CP_PROTECT probes for the HLSQ_INVALIDATE_CMD write (reg 0xbb08) that the Linux-SQE
++	 * replay dies on. Decoding the 32-entry table puts 0xbb08 between the SP range (0xae50..
++	 * 0xb17f) and the lone 0xb604 entry, i.e. possibly outside the CP write allow-list. */
++	{
++		int allow = 0, nop = 0;
++
++		(void)PE_parse_boot_argn("sweetallowhlsq", &allow, sizeof(allow));
++		(void)PE_parse_boot_argn("sweetnoprotect", &nop, sizeof(nop));
++		if (allow) {
++			/* slot 26 (0x8000b604) becomes HLSQ 0xb600..0xbdff, write-only allow */
++			DIPPER_WR(gpu, 0x086au, 0x1ffcb600u);
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET GPU: CP_PROTECT slot 26 <- %#x\n", DIPPER_RD(gpu, 0x086au));
++		}
++		if (nop) {
++			DIPPER_WR(gpu, 0x084fu, 0u);        /* CP_PROTECT_CNTL: protection off */
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET GPU: CP_PROTECT_CNTL <- %#x\n", DIPPER_RD(gpu, 0x084fu));
++		}
++	}
+ 	printf("SWEET GPU: dipper init: %u writes, %u read back different; RBBM_STATUS %#x"
+ 	    " CP_STATUS1 %#x\n", dipper_writes, dipper_differs,
+ 	    DIPPER_RD(gpu, 0x210u), DIPPER_RD(gpu, 0x825u));
