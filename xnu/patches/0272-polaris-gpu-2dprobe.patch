@@ -1,0 +1,35 @@
+From: polaris research
+Subject: [PATCH] 0272: CPU probe of the 2D blit registers (sweet2dprobe=1)
+
+The Linux-SQE replay now bisects to ONE instruction: TYPE4 write RB_2D_BLIT_CNTL
+(0x8c00) = 0x10f00380 stops the CP with protect 0. Write the same three 2D registers
+from the CPU to separate "the register/bus" from "the CP path".
+
+--- a/bsd/dev/sweet_dipper_init.c
++++ b/bsd/dev/sweet_dipper_init.c
+@@ -274,6 +274,25 @@
+ 		DIPPER_WR(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W, v & ~1u);
+ 		dipper_range(gpu, "HWCG", DIPPER_HWCG_BEGIN, DIPPER_HWCG_END);
+ 		DIPPER_WR(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W, DIPPER_RD(gmu, DIPPER_GMU_GX_SPTPRAC_CLK_W) | 1u);
++	/* 0272: CPU probe of the 2D blit registers the replay dies on (RB_2D_BLIT_CNTL 0x8c00).
++	 * sweet2dprobe=1 only: read the block first, then write the same values Mesa writes. */
++	{
++		int p2d = 0;
++
++		if (PE_parse_boot_argn("sweet2dprobe", &p2d, sizeof(p2d)) && p2d) {
++			printf("SWEET GPU: 2DPROBE before: 8c00 %#x 8400 %#x acc0 %#x\n",
++			    DIPPER_RD(gpu, 0x8c00u), DIPPER_RD(gpu, 0x8400u), DIPPER_RD(gpu, 0xacc0u));
++			DIPPER_WR(gpu, 0x8c00u, 0x10f00380u);
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET GPU: 2DPROBE 8c00 write ok, read %#x\n", DIPPER_RD(gpu, 0x8c00u));
++			DIPPER_WR(gpu, 0x8400u, 0x10f00380u);
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET GPU: 2DPROBE 8400 write ok, read %#x\n", DIPPER_RD(gpu, 0x8400u));
++			DIPPER_WR(gpu, 0xacc0u, 0x0000f018u);
++			__asm__ volatile ("dsb sy" ::: "memory");
++			printf("SWEET GPU: 2DPROBE acc0 write ok, read %#x\n", DIPPER_RD(gpu, 0xacc0u));
++		}
++	}
+ 		dipper_range(gpu, "HWCG_COMMIT", DIPPER_HWCG_COMMIT_BEGIN, DIPPER_HWCG_COMMIT_END);
+ 	}
+ 
