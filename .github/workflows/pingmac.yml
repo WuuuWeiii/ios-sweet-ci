@@ -1,0 +1,8 @@
+name: pingmac
+on:
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: macos-13
+    steps:
+      - run: echo hello from macos
