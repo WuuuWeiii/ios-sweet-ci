@@ -1,0 +1,32 @@
+From: polaris research
+Subject: [PATCH] 0268: CPU write probe of a630 register 0xbb08 (sweetspwrite=1)
+
+The Linux-SQE replay bisect: cut=8 completes, cut=10 dies on the type4 write
+reg 0xbb08 = 0x000fffff. Write the same register from the CPU during our bring-up to
+separate "the bus/block hangs on that register" from "the CP hangs on it".
+
+--- a/bsd/dev/sweet_dipper_init.c
++++ b/bsd/dev/sweet_dipper_init.c
+@@ -253,6 +253,22 @@
+ 
+ 	dipper_writes = 0;
+ 	dipper_differs = 0;
++	/* 0268: CPU-side probe of the register Mesa writes at the start of its first stream
++	 * (type4 reg 0xbb08 = 0x000fffff). l10 of the replay bisect died exactly on that write. */
++	{
++		int spw = 0;
++
++		if (PE_parse_boot_argn("sweetspwrite", &spw, sizeof(spw)) && spw) {
++			uint32_t back;
++
++			printf("SWEET GPU: SPREG write probe: 0xbb08 <- 0x000fffff\n");
++			DIPPER_WR(gpu, 0x0bb08u, 0x000fffffu);
++			__asm__ volatile ("dsb sy" ::: "memory");
++			back = DIPPER_RD(gpu, 0x0bb08u);
++			printf("SWEET GPU: SPREG 0xbb08 read %#x (%s)\n", back,
++			    back == 0x000fffffu ? "ok" : "DIFFERS");
++		}
++	}
+ 	printf("SWEET GPU: dipper-xnu hw_init table: %u entries (ADDRESS %u..%u, HWCG %u..%u,"
+ 	    " CORE %u..%u, PROTECT %u..%u; SECVID and IRQ skipped)\n",
+ 	    (uint32_t)(sizeof(dipper_a630_init) / sizeof(dipper_a630_init[0])),
