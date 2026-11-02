@@ -1,0 +1,9 @@
+name: mini
+on:
+  workflow_dispatch:
+jobs:
+  mini:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: sw_vers; xcodebuild -version | head -2
