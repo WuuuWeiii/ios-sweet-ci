@@ -1,0 +1,26 @@
+From: polaris research
+Subject: [PATCH] 0273: keep the panel content after RequestPowerChange(off) (sweetfb_keepon=1)
+
+backboardd fades the framebuffer to black by halving it every vsync once it asks for
+display off, which leaves the iOS lock screen invisible. Add a boot argument that ignores
+the off request while composing continues.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -683,6 +683,16 @@
+ 		}
+ 		break;
+ 	case kSweetFBRequestPowerChange:
++		{
++			uint32_t keepon = 0;
++
++			PE_parse_boot_argn("sweetfb_keepon", &keepon, sizeof(keepon));
++			if (keepon) {
++				IOLog("SWEET FB: power change ignored (state %d)\n",
++				    args->scalarInputCount >= 1 ? (int)args->scalarInput[0] : -1);
++				break;
++			}
++		}
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
+ 			IOLockLock(fFB->fLock);
